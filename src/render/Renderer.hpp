@@ -10,6 +10,12 @@
 
 namespace bh {
 
+// Light sources that can also be rendered into separate images for compositing
+// (RenderSettings::captureLayers, Renderer::layerTexture). Linear HDR before
+// exposure and bloom; alpha = coverage. They add up to the full image.
+enum class Layer { Sky, Disk, Particles, Count };
+constexpr int kLayerCount = static_cast<int>(Layer::Count);
+
 // Global look of the frame (independent of the scenario).
 struct RenderSettings {
   float exposure = 1.0f;
@@ -43,6 +49,7 @@ struct RenderSettings {
   // > 0: ray trace in tiles of this size and wait for each, so a very heavy
   // frame never trips the Windows GPU watchdog (TDR, ~2 s per call).
   int rayTileSize = 0;
+  bool captureLayers = false;  // also render every Layer into its own texture
 
   bool guideHorizon = false;
   bool guidePhotonSphere = false;
@@ -105,11 +112,15 @@ class Renderer {
   // (e.g. 0.995 = the highlights).
   float meterLuminance(float quantile);
 
+  // The last frame in linear HDR (before exposure and bloom): everything, or one layer.
+  GLuint hdrTexture() const { return hdr_.color; }
+  GLuint layerTexture(Layer layer) const { return layerTextures_[static_cast<size_t>(layer)]; }
+
   // 256x1 sRGB strips used as legends in the UI (ImTextureID-compatible).
   GLuint colormapTexture(Colormap c) const { return colormapStrips_[static_cast<size_t>(c)]; }
 
  private:
-  void ensureTargets(int width, int height);
+  void ensureTargets(int width, int height, bool layers);
   void buildSpectrum();
   void buildStars();
   void buildGuides();
@@ -144,6 +155,7 @@ class Renderer {
   LineRange horizonRing_, photonRing_, iscoRing_, grid_;
 
   gl::RenderTarget hdr_;
+  std::array<GLuint, kLayerCount> layerTextures_{};  // extra color attachments of hdr_ (0 = none)
   gl::RenderTarget meter_;
   // Enough levels that the smallest is ~16 px tall, so the glow has the same
   // relative size at 1080p and at 8K.

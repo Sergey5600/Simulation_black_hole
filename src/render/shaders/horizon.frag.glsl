@@ -1,7 +1,11 @@
 // Event horizon (r = 2M) as an exact ray-traced sphere that writes depth, so
 // particles behind it are hidden. No lensing yet: that is the ray-tracing stage.
 in vec2 vUv;
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
+// Black in the compositing layers too (lensing.frag.glsl), when they are drawn.
+layout(location = 1) out vec4 layerSky;
+layout(location = 2) out vec4 layerDisk;
+layout(location = 3) out vec4 layerParticles;
 
 uniform mat4 uInvViewProj;
 uniform mat4 uViewProj;
@@ -22,4 +26,7 @@ void main() {
     vec4 clip = uViewProj * vec4(uCameraPos + dir * t, 1.0);
     gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
     fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    layerSky = vec4(0.0);
+    layerDisk = vec4(0.0);
+    layerParticles = vec4(0.0);
 }

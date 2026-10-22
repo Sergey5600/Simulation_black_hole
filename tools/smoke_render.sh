@@ -52,7 +52,11 @@ print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path infall':<28} peak {pea
 sys.exit(0 if peak > 60 else 1)
 PY
 # Hover on engines near the horizon, then drop; with the physical readout.
-eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --record $OUT/hover --path hover --hud --record-size 240x136 --duration 0.5 --fps 8 --quality draft" > "$OUT/hover.log" 2>&1
+eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --record $OUT/hover --path hover --hud --layers all --record-size 240x136 --duration 0.5 --fps 8 --quality draft" > "$OUT/hover.log" 2>&1
+for layer in beauty/frame_00002.exr sky/frame_00002.exr disk/frame_00002.exr particles/frame_00002.exr hud/frame_00002.png; do
+  [ -s "$OUT/hover/$layer" ] || { cat "$OUT/hover.log"; echo "FAIL layer $layer missing"; exit 1; }
+done
+echo "ok   record --layers all          5 layers written"
 python3 -I - "$OUT/hover/frame_00002.jpg" <<'PY'
 import sys
 from PIL import Image

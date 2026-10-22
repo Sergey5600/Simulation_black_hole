@@ -311,6 +311,67 @@ struct QualityPreset {
   const char* format;
 };
 
+// --layers: extra image sequences for compositing, in DIR/<name>/.
+constexpr int kLayerBeauty = -1;  // the full image, linear
+constexpr int kLayerHud = -2;     // the journey readout on transparent background
+
+struct LayerOutput {
+  std::string name;
+  int source = kLayerBeauty;  // a Layer, kLayerBeauty or kLayerHud
+  gl::RenderTarget accum;     // sub-frame sum (motion blur), RGBA32F
+  gl::RenderTarget out;       // output resolution
+};
+
+bool parseLayers(const std::string& list, std::vector<LayerOutput>& out) {
+  static const std::pair<const char*, int> kNames[] = {
+      {"beauty", kLayerBeauty}, {"sky", static_cast<int>(Layer::Sky)}, {"disk", static_cast<int>(Layer::Disk)},
+      {"particles", static_cast<int>(Layer::Particles)}, {"hud", kLayerHud}};
+  std::string rest = list;
+  while (!rest.empty()) {
+    const size_t comma = rest.find(',');
+    const std::string name = rest.substr(0, comma);
+    rest = comma == std::string::npos ? "" : rest.substr(comma + 1);
+    if (name.empty()) continue;
+    bool found = false;
+    for (const auto& [n, source] : kNames) {
+      if (name != n && name != "all") continue;
+      LayerOutput layer;
+      layer.name = n;
+      layer.source = source;
+      out.push_back(std::move(layer));
+      found = true;
+    }
+    if (!found) {
+      std::fprintf(stderr, "Unknown layer '%s' (beauty, sky, disk, particles, hud or all)\n", name.c_str());
+      return false;
+    }
+  }
+  return true;
+}
+
+// Linear HDR -> display, as composite.frag.glsl does (without bloom and vignette).
+unsigned char displayValue(float linear) {
+  const float c = linear <= 0.0031308f ? 12.92f * linear : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+  return static_cast<unsigned char>(std::clamp(c, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
+
+void acesToDisplay(const float* rgba, size_t count, unsigned char* rgb) {
+  for (size_t i = 0; i < count; ++i) {
+    const float r = rgba[4 * i], g = rgba[4 * i + 1], b = rgba[4 * i + 2];
+    // Stephen Hill's ACES fit: input matrix, RRT+ODT curve, output matrix.
+    const float in[3] = {0.59719f * r + 0.35458f * g + 0.04823f * b, 0.07600f * r + 0.90834f * g + 0.01566f * b,
+                         0.02840f * r + 0.13383f * g + 0.83777f * b};
+    float fit[3];
+    for (int c = 0; c < 3; ++c) {
+      const float x = in[c];
+      fit[c] = (x * (x + 0.0245786f) - 0.000090537f) / (x * (0.983729f * x + 0.4329510f) + 0.238081f);
+    }
+    rgb[3 * i + 0] = displayValue(1.60475f * fit[0] - 0.53108f * fit[1] - 0.07367f * fit[2]);
+    rgb[3 * i + 1] = displayValue(-0.10208f * fit[0] + 1.10813f * fit[1] - 0.00605f * fit[2]);
+    rgb[3 * i + 2] = displayValue(-0.00327f * fit[0] - 0.07276f * fit[1] + 1.07602f * fit[2]);
+  }
+}
+
 bool qualityPreset(const std::string& name, QualityPreset& q) {
   if (name == "draft") q = {1, 1, 0.0f, 0.03f, 1500, "jpg"};
   else if (name == "film") q = {2, 1, 0.0f, 0.012f, 4000, "jpg"};
@@ -380,9 +441,18 @@ int App::record() {
     settings.lensing = true;
     settings.spin = 0.0f;
   }
+  std::vector<LayerOutput> layers;
+  if (!parseLayers(options_.layers, layers)) return 2;
+  const bool layersExr = options_.layerFormat != "png";
+  bool hudLayer = false;
+  for (const LayerOutput& l : layers) {
+    hudLayer |= l.source == kLayerHud;
+    settings.captureLayers |= l.source >= 0;
+  }
   const bool hud = options_.hud && firstPerson;
-  if (options_.hud && !firstPerson) std::printf("--hud: only first-person journeys (%s) have a readout\n", Journey::names());
-  if (hud) {
+  if ((options_.hud || hudLayer) && !firstPerson)
+    std::printf("hud: only first-person journeys (%s) have a readout\n", Journey::names());
+  if (hud || (hudLayer && firstPerson)) {
     // Fonts sized for the output frame; the UI backend rebuilds its atlas on the next frame.
     ui::applyTheme(std::max(0.8f, 1.25f * static_cast<float>(outH) / 1080.0f));
     ImGui_ImplOpenGL3_DestroyFontsTexture();
@@ -396,7 +466,25 @@ int App::record() {
   target.create(bigW, bigH, GL_RGBA8, false);
   if (samples > 1) accum.create(bigW, bigH, GL_RGBA32F, false);
   out.create(outW, outH, GL_RGBA8, false);
-  std::vector<unsigned char> pixels(static_cast<size_t>(outW) * outH * 3);
+  std::vector<unsigned char> pixels(static_cast<size_t>(outW) * outH * 4);
+  std::vector<float> linearPixels;
+  for (LayerOutput& l : layers) {
+    if (l.source == kLayerHud) {
+      l.out.create(outW, outH, GL_RGBA8, false);
+      continue;
+    }
+    if (samples > 1) l.accum.create(bigW, bigH, GL_RGBA32F, false);
+    l.out.create(outW, outH, GL_RGBA32F, false);
+    linearPixels.resize(static_cast<size_t>(outW) * outH * 4);
+  }
+  auto layerSource = [&](const LayerOutput& l) {
+    return l.source == kLayerBeauty ? renderer_.hdrTexture() : renderer_.layerTexture(static_cast<Layer>(l.source));
+  };
+  auto layerFile = [&](const LayerOutput& l, int f) {
+    char name[64];
+    std::snprintf(name, sizeof(name), "frame_%05d.%s", f, l.source == kLayerHud || !layersExr ? "png" : "exr");
+    return (std::filesystem::path(options_.recordDir) / l.name / name).string();
+  };
   std::filesystem::create_directories(options_.recordDir);
   glfwSwapInterval(0);
 
@@ -444,7 +532,9 @@ int App::record() {
     char name[64];
     std::snprintf(name, sizeof(name), "frame_%05d.%s", f, format.c_str());
     const std::string file = (std::filesystem::path(options_.recordDir) / name).string();
-    if (std::filesystem::exists(file)) continue;  // resume
+    bool done = std::filesystem::exists(file);
+    for (const LayerOutput& l : layers) done = done && std::filesystem::exists(layerFile(l, f));
+    if (done) continue;  // resume
 
     uploadPoints();
     if (autoExposure && !metered) {  // first frame (or first after a resume): meter before shooting
@@ -454,20 +544,66 @@ int App::record() {
     }
     settings.exposure = baseExposure * std::exp2(exposureEv);
     if (samples > 1) {
-      glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
       glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
       glClear(GL_COLOR_BUFFER_BIT);
+      for (const LayerOutput& l : layers) {
+        if (!l.accum.fbo) continue;
+        glBindFramebuffer(GL_FRAMEBUFFER, l.accum.fbo);
+        glClear(GL_COLOR_BUFFER_BIT);
+      }
     }
     for (int k = 0; k < samples; ++k) {
       renderSubframe(f, k);
-      if (samples > 1) renderer_.accumulate(target.color, accum, 1.0f / static_cast<float>(samples));
+      if (samples == 1) continue;
+      const float weight = 1.0f / static_cast<float>(samples);
+      renderer_.accumulate(target.color, accum, weight);
+      for (const LayerOutput& l : layers)
+        if (l.accum.fbo) renderer_.accumulate(layerSource(l), l.accum, weight);
     }
     const float frameEv = exposureEv;
     if (autoExposure) exposureEv += (meteredEv() - exposureEv) * (1.0f - std::exp(-1.0f / (0.4f * static_cast<float>(options_.recordFps))));
     renderer_.downsample(samples > 1 ? accum.color : target.color, ssaa, out);
-    if (hud) {
-      const float u = frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f;
-      drawOverlay(out, [&] { ui::drawJourneyHud(journey.at(u), options_.solarMasses, autoExposure ? frameEv : NAN); });
+    const float uFrame = frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f;
+    auto drawHud = [&] { ui::drawJourneyHud(journey.at(uFrame), options_.solarMasses, autoExposure ? frameEv : NAN); };
+    if (hud) drawOverlay(out, drawHud);
+
+    // Layers: linear EXR (scene light x the frame's exposure; alpha = coverage)
+    // or tone-mapped PNG; the HUD as a PNG with alpha.
+    for (LayerOutput& l : layers) {
+      bool ok = true;
+      if (l.source == kLayerHud) {
+        if (!firstPerson) continue;
+        glBindFramebuffer(GL_FRAMEBUFFER, l.out.fbo);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawOverlay(l.out, drawHud);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, l.out.fbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, outW, outH, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        for (size_t i = 0; i < static_cast<size_t>(outW) * outH; ++i) {  // ImGui blends premultiplied
+          const int a = pixels[4 * i + 3];
+          for (int c = 0; c < 3 && a > 0; ++c) pixels[4 * i + c] = static_cast<unsigned char>(std::min(255, pixels[4 * i + c] * 255 / a));
+        }
+        ok = writeImage(layerFile(l, f), outW, outH, pixels.data(), 4);
+      } else {
+        renderer_.downsample(samples > 1 ? l.accum.color : layerSource(l), ssaa, l.out);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, l.out.fbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(0, 0, outW, outH, GL_RGBA, GL_FLOAT, linearPixels.data());
+        for (size_t i = 0; i < linearPixels.size(); i += 4)
+          for (int c = 0; c < 3; ++c) linearPixels[i + static_cast<size_t>(c)] *= settings.exposure;
+        if (layersExr) {
+          ok = writeExr(layerFile(l, f), outW, outH, linearPixels.data());
+        } else {
+          acesToDisplay(linearPixels.data(), static_cast<size_t>(outW) * outH, pixels.data());
+          ok = writeImage(layerFile(l, f), outW, outH, pixels.data(), 3);
+        }
+      }
+      if (!ok) {
+        std::fprintf(stderr, "Failed to write %s (disk full?)\n", layerFile(l, f).c_str());
+        return 1;
+      }
     }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, out.fbo);
@@ -505,6 +641,10 @@ int App::record() {
   target.destroy();
   accum.destroy();
   out.destroy();
+  for (LayerOutput& l : layers) {
+    l.accum.destroy();
+    l.out.destroy();
+  }
 
   // ffmpeg helper next to the frames: H.264 plays everywhere; the HEVC 10-bit
   // line gives smaller files and smoother dark gradients.

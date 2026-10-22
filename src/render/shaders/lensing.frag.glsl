@@ -7,8 +7,15 @@
 // Spin 0 uses the exact Schwarzschild null equation in pseudo-Cartesian form,
 // x'' = -3M h² x / r⁵ (h = |x × x'|). Spin ≠ 0 integrates Hamilton's equations
 // in Cartesian Kerr-Schild coordinates (same formulas as src/core/Kerr.hpp).
+//
+// Besides the full image, every light source goes to its own output for
+// compositing (Renderer layers); alpha there is coverage (1 where the source is
+// visible), so the layers add up to the full image and double as holdout mattes.
 in vec2 vUv;
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;      // everything
+layout(location = 1) out vec4 layerSky;       // stars and Milky Way
+layout(location = 2) out vec4 layerDisk;      // the thin disk
+layout(location = 3) out vec4 layerParticles; // the lensed particle volume (additive)
 
 uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
@@ -180,6 +187,22 @@ vec3 kerrDiskEmission(vec3 X, float lz, float a) {
     return diskShade(r, atan(w.z, w.x), omega, g);
 }
 
+// Light reaching the camera along one ray, by source.
+struct Light {
+    vec3 sky, disk, particles;  // particles: unshifted (see particleShift)
+    float skyCover, diskCover;
+};
+
+Light noLight() { return Light(vec3(0.0), vec3(0.0), vec3(0.0), 0.0, 0.0); }
+
+void emit(Light L) {
+    vec3 particles = particleShift(L.particles, gCamera);
+    layerSky = vec4(L.sky, L.skyCover);
+    layerDisk = vec4(L.disk, L.diskCover);
+    layerParticles = vec4(particles, 0.0);
+    fragColor = vec4(L.sky + L.disk + particles, 1.0);
+}
+
 // Tracing light backwards in time near a rotating hole: Kerr is symmetric under
 // (t -> -t, a -> -a), so instead of integrating backwards (which runs into the
 // past horizon, where ingoing Kerr-Schild coordinates break down) we integrate
@@ -187,15 +210,15 @@ vec3 kerrDiskEmission(vec3 X, float lz, float a) {
 // future horizon cleanly. E, L_z (up to sign), the Boyer-Lindquist radius of the
 // disk crossing and the escape direction are the same in both pictures; only
 // the azimuth near the hole is twisted, which an axisymmetric disk does not mind.
-vec3 traceKerr(vec3 dir, out vec3 light) {
+Light traceKerr(vec3 dir) {
     float a = -uSpin;  // mirrored hole
     vec3 X = toKS(uCameraPos);
     vec3 p = ksNullMomentum(X, toKS(dir), a);
     float escapeRadius = max(length(uCameraPos), max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
-    light = vec3(0.0);  // particle volume, integrated along the ray
+    Light L = noLight();
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = ksRadius(X, a);
-        if (r < uHorizon) return vec3(0.0);  // crossed the horizon: shadow
+        if (r < uHorizon) return L;  // crossed the horizon: shadow
         float h = uStepScale * r;
         vec3 X0 = X, p0 = p;
         vec3 dx1, dp1, dx2, dp2, dx3, dp3, dx4, dp4;
@@ -205,7 +228,7 @@ vec3 traceKerr(vec3 dir, out vec3 light) {
         ksDerivatives(X0 + h * dx3, p0 + h * dp3, a, dx4, dp4);
         X = X0 + (h / 6.0) * (dx1 + 2.0 * dx2 + 2.0 * dx3 + dx4);
         p = p0 + (h / 6.0) * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4);
-        light += volumeLight(fromKS(X0), fromKS(X));
+        L.particles += volumeLight(fromKS(X0), fromKS(X));
 
         if (uDisk && X0.z * X.z < 0.0) {
             float s = X0.z / (X0.z - X.z);
@@ -213,26 +236,35 @@ vec3 traceKerr(vec3 dir, out vec3 light) {
             vec3 pd = mix(p0, p, s);
             float rd = ksRadius(Xd, a);
             // The physical photon runs the other way: L_z flips sign.
-            if (rd > uDiskRadii.x && rd < uDiskRadii.y) return kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
+            if (rd > uDiskRadii.x && rd < uDiskRadii.y) {
+                L.disk = kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
+                L.diskCover = 1.0;
+                return L;
+            }
         }
         vec3 step = X - X0;
-        if (r > escapeRadius && dot(X, step) > 0.0) return skyLight(fromKS(normalize(step)), gCamera);
+        if (r > escapeRadius && dot(X, step) > 0.0) {
+            L.sky = skyLight(fromKS(normalize(step)), gCamera);
+            L.skyCover = 1.0;
+            return L;
+        }
     }
-    return vec3(0.0);
+    return L;
 }
 
 void main() {
     vec4 farPoint = uInvViewProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
     vec3 dir = normalize(farPoint.xyz / farPoint.w - uCameraPos);
+    Light L = noLight();
     if (!uLensing) {
-        fragColor = vec4(skyLight(dir, 1.0), 1.0);
+        L.sky = skyLight(dir, 1.0);
+        L.skyCover = 1.0;
+        emit(L);
         return;
     }
     if (abs(uSpin) > 1e-4 && !uFalling) {
         gCamera = 1.0 / sqrt(max(1.0 - 2.0 / length(uCameraPos), 1e-4));  // static camera
-        vec3 particles;
-        vec3 color = traceKerr(dir, particles);
-        fragColor = vec4(color + particleShift(particles, gCamera), 1.0);
+        emit(traceKerr(dir));
         return;
     }
 
@@ -257,7 +289,7 @@ void main() {
         // would carry negative energy; they could only come from a white hole,
         // which real black holes do not have. That cone is the shadow ahead.
         if (denominator <= 0.02) {
-            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            emit(L);
             return;
         }
         v = normalize(n * (w + E * dr) + dPerp);
@@ -272,8 +304,6 @@ void main() {
     float h2 = dot(Lv, Lv);
     float escapeRadius = max(rCam, max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
 
-    vec3 color = vec3(0.0);
-    vec3 particles = vec3(0.0);
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = length(x);
         // Captured: inside the horizon and still heading inwards (backwards in time).
@@ -281,7 +311,8 @@ void main() {
         if (r < 2.0005 && dot(x, v) < 0.0) break;
         if (r < 0.05) break;
         if (r > escapeRadius && dot(x, v) > 0.0) {
-            color += skyLight(normalize(v), gCamera);
+            L.sky = skyLight(normalize(v), gCamera);
+            L.skyCover = 1.0;
             break;
         }
 
@@ -294,7 +325,7 @@ void main() {
         vec3 k4x = v0 + h * k3v, k4v = accel(x0 + h * k3x, h2);
         x = x0 + (h / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
         v = v0 + (h / 6.0) * (k1v + 2.0 * k2v + 2.0 * k3v + k4v);
-        particles += volumeLight(x0, x);
+        L.particles += volumeLight(x0, x);
 
         // Opaque thin disk in the equatorial plane y = 0.
         if (uDisk && x0.y * x.y < 0.0) {
@@ -302,10 +333,11 @@ void main() {
             vec3 p = mix(x0, x, s);
             float rp = length(p);
             if (rp > uDiskRadii.x && rp < uDiskRadii.y) {
-                color += diskEmission(p, normalize(mix(v0, v, s)));
+                L.disk = diskEmission(p, normalize(mix(v0, v, s)));
+                L.diskCover = 1.0;
                 break;
             }
         }
     }
-    fragColor = vec4(color + particleShift(particles, gCamera), 1.0);
+    emit(L);
 }

@@ -27,7 +27,20 @@ FetchContent_Declare(imgui
   GIT_TAG v1.91.9b
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(glfw glm imgui)
+# --- tinyexr: OpenEXR writer for compositing layers (BSD-3; bundles miniz, MIT) --
+FetchContent_Declare(tinyexr
+  GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
+  GIT_TAG v1.0.9
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR no-such-dir)  # sources only: skip its own CMake project (tests, examples)
+
+FetchContent_MakeAvailable(glfw glm imgui tinyexr)
+
+add_library(tinyexr STATIC ${tinyexr_SOURCE_DIR}/tinyexr.cc ${tinyexr_SOURCE_DIR}/deps/miniz/miniz.c)
+target_include_directories(tinyexr SYSTEM PUBLIC ${tinyexr_SOURCE_DIR} ${tinyexr_SOURCE_DIR}/deps/miniz)
+if(MSVC)
+  target_compile_definitions(tinyexr PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 add_library(imgui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp

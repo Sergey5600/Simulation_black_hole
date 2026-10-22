@@ -93,7 +93,7 @@ add_executable(blackhole
 )
 target_include_directories(blackhole PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(blackhole SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-target_link_libraries(blackhole PRIVATE bh_sim glad glfw glm::glm imgui)
+target_link_libraries(blackhole PRIVATE bh_sim glad glfw glm::glm imgui tinyexr)
 if(BH_HAS_CUDA)
   target_link_libraries(blackhole PRIVATE bh_cuda)
 endif()

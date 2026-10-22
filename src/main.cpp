@@ -56,7 +56,11 @@ void printUsage() {
       "  --auto-exposure B   on/off: meter the highlights like a video camera (default: on for\n"
       "                      journeys, whose sky gets 100x brighter near the horizon)\n"
       "  --mass M            hole mass in suns for the readout (default 4.3e6, Sagittarius A*)\n"
-      "  --format F          jpg (default) or png\n");
+      "  --format F          jpg (default) or png\n"
+      "  --layers LIST       also write separate sequences for compositing into DIR/<layer>/:\n"
+      "                      beauty, sky, disk, particles (linear light, alpha = coverage: they add\n"
+      "                      up to beauty), hud (PNG with alpha), or all\n"
+      "  --layer-format F    exr (default: half-float OpenEXR, linear) or png (tone-mapped)\n");
 }
 
 }  // namespace
@@ -126,6 +130,10 @@ int main(int argc, char** argv) {
       opt.hud = true;
     } else if (!std::strcmp(a, "--mass")) {
       opt.solarMasses = std::max(1.0, std::atof(next()));
+    } else if (!std::strcmp(a, "--layers")) {
+      opt.layers = next();
+    } else if (!std::strcmp(a, "--layer-format")) {
+      opt.layerFormat = next();
     } else if (!std::strcmp(a, "--format")) {
       opt.frameFormat = next();
     } else if (!std::strcmp(a, "--backend")) {

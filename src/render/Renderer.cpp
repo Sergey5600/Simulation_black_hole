@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -66,6 +67,7 @@ bool Renderer::init() {
 
 void Renderer::shutdown() {
   hdr_.destroy();
+  glDeleteTextures(kLayerCount, layerTextures_.data());
   meter_.destroy();
   for (auto& m : bloomMips_) m.destroy();
   glDeleteTextures(static_cast<GLsizei>(colormapStrips_.size()), colormapStrips_.data());
@@ -424,9 +426,26 @@ float Renderer::meterLuminance(float quantile) {
   return lum[k];
 }
 
-void Renderer::ensureTargets(int width, int height) {
-  if (hdr_.width == width && hdr_.height == height) return;
+void Renderer::ensureTargets(int width, int height, bool layers) {
+  if (hdr_.width == width && hdr_.height == height && (layerTextures_[0] != 0) == layers) return;
   hdr_.create(width, height, GL_RGBA16F, true);
+  glDeleteTextures(kLayerCount, layerTextures_.data());
+  layerTextures_.fill(0);
+  if (layers) {
+    glGenTextures(kLayerCount, layerTextures_.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, hdr_.fbo);
+    for (int i = 0; i < kLayerCount; ++i) {
+      glBindTexture(GL_TEXTURE_2D, layerTextures_[static_cast<size_t>(i)]);
+      glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, width, height);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, static_cast<GLenum>(GL_COLOR_ATTACHMENT1 + i), GL_TEXTURE_2D,
+                             layerTextures_[static_cast<size_t>(i)], 0);
+    }
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+      std::fprintf(stderr, "[gl] layer framebuffer incomplete\n");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
   for (auto& mip : bloomMips_) mip.destroy();
   bloomMips_.clear();
   int w = width, h = height;
@@ -481,10 +500,17 @@ void Renderer::renderBloom(const RenderSettings& settings) {
 }
 
 void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLuint targetFbo) {
-  ensureTargets(in.width, in.height);
+  ensureTargets(in.width, in.height, settings.captureLayers);
   const glm::mat4 viewProj = in.projection * in.view;
+  const bool layers = layerTextures_[0] != 0;
+  static const GLenum kAllBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2,
+                                       GL_COLOR_ATTACHMENT3};
+  static_assert(sizeof(kAllBuffers) / sizeof(GLenum) == kLayerCount + 1);
+  const GLenum mainBuffer = GL_COLOR_ATTACHMENT0;
 
   glBindFramebuffer(GL_FRAMEBUFFER, hdr_.fbo);
+  // The background and horizon passes write every layer; later passes only the full image.
+  glDrawBuffers(layers ? kLayerCount + 1 : 1, kAllBuffers);
   glViewport(0, 0, in.width, in.height);
   glClearColor(0.0015f, 0.002f, 0.004f, 1.0f);
   glClearDepth(1.0);
@@ -585,6 +611,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   glBindVertexArray(emptyVao_);
   glDrawArrays(GL_TRIANGLES, 0, 3);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glDrawBuffers(1, &mainBuffer);
 
   // 3. Guides.
   glDepthMask(GL_FALSE);
@@ -613,6 +640,12 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
     setShadingUniforms(pointsProgram_, in);
     glBindVertexArray(pointsVao_);
     glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(in.pointCount));
+    if (layers) {  // the same splats once more, into the particle layer
+      const GLenum particleBuffer = GL_COLOR_ATTACHMENT1 + static_cast<GLenum>(Layer::Particles);
+      glDrawBuffers(1, &particleBuffer);
+      glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(in.pointCount));
+      glDrawBuffers(1, &mainBuffer);
+    }
   }
   glDepthMask(GL_TRUE);
   glDisable(GL_BLEND);
