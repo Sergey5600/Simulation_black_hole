@@ -17,6 +17,13 @@ uniform float uSkyBrightness;
 uniform bool uLensing;
 
 uniform bool uDisk;
+
+// Particle light splatted into a 3D emission grid (Renderer::splatParticles).
+uniform bool uVolumeOn;
+uniform sampler3D uVolume;
+uniform vec3 uVolumeMin;
+uniform float uVolumeSize;
+uniform float uVoxel;
 uniform vec2 uDiskRadii;       // inner, outer (M)
 uniform float uDiskBrightness;
 uniform float uPeakTemperature;
@@ -32,6 +39,22 @@ uniform float uHorizon;        // r+ = 1 + sqrt(1 - a²)
 uniform float uIsco;           // sets the temperature profile
 
 vec3 sky(vec3 dir) { return textureLod(uSky, dir, 0.0).rgb * uSkyBrightness; }
+
+// Light emitted by the particle volume along the (short, straight) chord a -> b
+// of a ray step, in world coordinates. Optically thin: just integrate emissivity.
+vec3 volumeLight(vec3 a, vec3 b) {
+    if (!uVolumeOn) return vec3(0.0);
+    vec3 lo = min(a, b), hi = max(a, b);
+    if (any(greaterThan(lo, uVolumeMin + uVolumeSize)) || any(lessThan(hi, uVolumeMin))) return vec3(0.0);
+    float len = length(b - a);
+    int n = clamp(int(ceil(len / uVoxel)), 1, 96);
+    vec3 sum = vec3(0.0);
+    for (int k = 0; k < n; ++k) {
+        vec3 p = mix(a, b, (float(k) + 0.5) / float(n));
+        sum += textureLod(uVolume, (p - uVolumeMin) / uVolumeSize, 0.0).rgb;
+    }
+    return sum * (len / float(n));
+}
 
 vec3 accel(vec3 x, float h2) {
     float r2 = dot(x, x);
@@ -135,10 +158,11 @@ vec3 traceKerr(vec3 dir) {
     float a = -uSpin;  // mirrored hole
     vec3 X = toKS(uCameraPos);
     vec3 p = ksNullMomentum(X, toKS(dir), a);
-    float escapeRadius = max(length(uCameraPos), uDiskRadii.y) + 20.0;
+    float escapeRadius = max(length(uCameraPos), max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
+    vec3 light = vec3(0.0);
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = ksRadius(X, a);
-        if (r < uHorizon) return vec3(0.0);  // crossed the horizon: shadow
+        if (r < uHorizon) return light;  // crossed the horizon: shadow
         float h = uStepScale * r;
         vec3 X0 = X, p0 = p;
         vec3 dx1, dp1, dx2, dp2, dx3, dp3, dx4, dp4;
@@ -148,6 +172,7 @@ vec3 traceKerr(vec3 dir) {
         ksDerivatives(X0 + h * dx3, p0 + h * dp3, a, dx4, dp4);
         X = X0 + (h / 6.0) * (dx1 + 2.0 * dx2 + 2.0 * dx3 + dx4);
         p = p0 + (h / 6.0) * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4);
+        light += volumeLight(fromKS(X0), fromKS(X));
 
         if (uDisk && X0.z * X.z < 0.0) {
             float s = X0.z / (X0.z - X.z);
@@ -155,12 +180,12 @@ vec3 traceKerr(vec3 dir) {
             vec3 pd = mix(p0, p, s);
             float rd = ksRadius(Xd, a);
             // The physical photon runs the other way: L_z flips sign.
-            if (rd > uDiskRadii.x && rd < uDiskRadii.y) return kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
+            if (rd > uDiskRadii.x && rd < uDiskRadii.y) return light + kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
         }
         vec3 step = X - X0;
-        if (r > escapeRadius && dot(X, step) > 0.0) return sky(fromKS(normalize(step)));
+        if (r > escapeRadius && dot(X, step) > 0.0) return light + sky(fromKS(normalize(step)));
     }
-    return vec3(0.0);
+    return light;
 }
 
 void main() {
@@ -179,14 +204,14 @@ void main() {
     vec3 v = dir;
     vec3 Lv = cross(x, v);
     float h2 = dot(Lv, Lv);
-    float escapeRadius = max(length(uCameraPos), uDiskRadii.y) + 20.0;
+    float escapeRadius = max(length(uCameraPos), max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
 
     vec3 color = vec3(0.0);
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = length(x);
         if (r < 2.0005) break;  // captured: shadow
         if (r > escapeRadius && dot(x, v) > 0.0) {
-            color = sky(normalize(v));
+            color += sky(normalize(v));
             break;
         }
 
@@ -199,6 +224,7 @@ void main() {
         vec3 k4x = v0 + h * k3v, k4v = accel(x0 + h * k3x, h2);
         x = x0 + (h / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
         v = v0 + (h / 6.0) * (k1v + 2.0 * k2v + 2.0 * k3v + k4v);
+        color += volumeLight(x0, x);
 
         // Opaque thin disk in the equatorial plane y = 0.
         if (uDisk && x0.y * x.y < 0.0) {
@@ -206,7 +232,7 @@ void main() {
             vec3 p = mix(x0, x, s);
             float rp = length(p);
             if (rp > uDiskRadii.x && rp < uDiskRadii.y) {
-                color = diskEmission(p, normalize(mix(v0, v, s)));
+                color += diskEmission(p, normalize(mix(v0, v, s)));
                 break;
             }
         }

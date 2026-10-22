@@ -87,6 +87,8 @@ ScenarioDefaults StarDisruption::defaults() const {
   d.appearance.pointSize = 0.12f;
   d.appearance.brightness = 0.25f;
   d.appearance.dopplerBeaming = false;
+  d.appearance.lensSource = Appearance::Particles;
+  d.appearance.volumeExtent = 120.0f;
   d.view = ViewPreset{0.3f, 1.0f, 120.0f};
   d.timeScale = 30.0f;
   d.timeMode = TimeMode::Coordinate;

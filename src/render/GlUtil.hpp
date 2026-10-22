@@ -20,10 +20,12 @@ class Program {
 
   bool build(const char* debugName, std::initializer_list<const char*> vertexParts,
              std::initializer_list<const char*> fragmentParts);
+  bool buildCompute(const char* debugName, std::initializer_list<const char*> parts);
   void use() const { glUseProgram(id_); }
   GLuint id() const { return id_; }
 
   void set(const char* name, int v);
+  void set(const char* name, unsigned v);
   void set(const char* name, bool v) { set(name, v ? 1 : 0); }
   void set(const char* name, float v);
   void set(const char* name, const glm::vec2& v);

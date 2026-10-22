@@ -42,6 +42,12 @@ struct Appearance {
   bool colorShift = true;           // observed temperature = g · T
 
   bool fadeWithAge = false;  // photons: fade out before their slot is recycled
+
+  // What the lensing ray tracer sees: the analytic thin disk, the particles
+  // (splatted into a volume and lensed), or both.
+  enum LensSource : int { ThinDisk = 0, Particles = 1, Both = 2 };
+  int lensSource = ThinDisk;
+  float volumeExtent = 50.0f;  // edge of the particle volume cube (M), centered on the hole
 };
 
 struct ViewPreset {

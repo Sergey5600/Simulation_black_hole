@@ -27,7 +27,7 @@ void appendRing(std::vector<glm::vec3>& out, float radius, int segments) {
 bool Renderer::init() {
   using namespace shaders;
   bool ok = true;
-  ok &= pointsProgram_.build("points", {common, points_vert}, {points_frag});
+  ok &= pointsProgram_.build("points", {common, particle_shading, points_vert}, {points_frag});
   ok &= starsProgram_.build("stars", {stars_vert}, {points_frag});
   ok &= horizonProgram_.build("horizon", {fullscreen_vert}, {horizon_frag});
   ok &= linesProgram_.build("lines", {lines_vert}, {lines_frag});
@@ -37,6 +37,8 @@ bool Renderer::init() {
   ok &= stripProgram_.build("colormap_strip", {fullscreen_vert}, {common, colormap_strip_frag});
   ok &= skyGenProgram_.build("sky_gen", {fullscreen_vert}, {common, sky_gen_frag});
   ok &= backgroundProgram_.build("lensing", {fullscreen_vert}, {common, lensing_frag});
+  ok &= splatProgram_.buildCompute("splat", {common, particle_shading, splat_comp});
+  ok &= volumeResolveProgram_.buildCompute("volume_resolve", {volume_resolve_comp});
   if (!ok) return false;
 
   glGenVertexArrays(1, &emptyVao_);
@@ -63,6 +65,8 @@ void Renderer::shutdown() {
   for (auto& m : bloomMips_) m.destroy();
   glDeleteTextures(static_cast<GLsizei>(colormapStrips_.size()), colormapStrips_.data());
   glDeleteTextures(1, &skyCubemap_);
+  glDeleteTextures(3, volumeSums_.data());
+  glDeleteTextures(1, &volumeEmission_);
   const GLuint vaos[] = {emptyVao_, pointsVao_, starsVao_, linesVao_};
   const GLuint vbos[] = {pointsVbo_, starsVbo_, linesVbo_};
   glDeleteVertexArrays(4, vaos);
@@ -253,6 +257,85 @@ void Renderer::buildSky() {
   glDeleteFramebuffers(1, &fbo);
 }
 
+void Renderer::setShadingUniforms(gl::Program& program, const FrameInput& in) {
+  const Appearance& a = in.appearance;
+  program.set("uCameraPos", in.cameraPos);
+  program.set("uPointSize", a.pointSize);
+  program.set("uPhotons", in.photons);
+  program.set("uScalarIsBrightness", in.scalarIsBrightness);
+  program.set("uStyle", static_cast<int>(a.style));
+  program.set("uQuantity", static_cast<int>(a.quantity));
+  program.set("uColormap", static_cast<int>(a.colormap));
+  const float span = std::fabs(a.rangeMax - a.rangeMin) < 1e-6f ? 1e-6f : a.rangeMax - a.rangeMin;
+  program.set("uRange", glm::vec2(a.rangeMin, a.rangeMin + span));
+  // Gas: total light must not depend on how finely we sample it. Each particle
+  // carries 1/N of the disk and its sprite covers ∝ size² pixels.
+  float brightness = a.brightness;
+  if (!in.photons) {
+    constexpr float kRefCount = 300000.0f, kRefSize = 0.12f;
+    const float sizeRatio = kRefSize / std::max(a.pointSize, 1e-4f);
+    brightness *= kRefCount / static_cast<float>(std::max<size_t>(in.pointCount, 1)) * sizeRatio * sizeRatio;
+  }
+  program.set("uBrightness", brightness);
+  program.set("uPeakTemperature", a.peakTemperature);
+  program.set("uBeaming", a.dopplerBeaming);
+  program.set("uColorShift", a.colorShift);
+  program.set("uLifetime", in.lifetime);
+  program.set("uFadeWithAge", a.fadeWithAge);
+}
+
+// Lensing of particles: every particle's light is deposited into a cube of
+// N³ voxels around the hole; the ray tracer integrates it along bent rays.
+bool Renderer::splatParticles(const FrameInput& in, const RenderSettings& settings) {
+  const int res = std::clamp(settings.volumeResolution, 32, 512);
+  if (res != volumeRes_) {
+    glDeleteTextures(3, volumeSums_.data());
+    glDeleteTextures(1, &volumeEmission_);
+    glGenTextures(3, volumeSums_.data());
+    for (GLuint tex : volumeSums_) {
+      glBindTexture(GL_TEXTURE_3D, tex);
+      glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI, res, res, res);
+    }
+    glGenTextures(1, &volumeEmission_);
+    glBindTexture(GL_TEXTURE_3D, volumeEmission_);
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA16F, res, res, res);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const float border[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glTexParameterfv(GL_TEXTURE_3D, GL_TEXTURE_BORDER_COLOR, border);
+    for (GLenum axis : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R})
+      glTexParameteri(GL_TEXTURE_3D, axis, GL_CLAMP_TO_BORDER);
+    volumeRes_ = res;
+  }
+  const GLuint zero = 0;
+  for (GLuint tex : volumeSums_) glClearTexImage(tex, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+
+  const float extent = std::max(in.appearance.volumeExtent, 1.0f);
+  constexpr float kFixedScale = 4194304.0f;  // 2^22: resolves 1e-7, overflows past ~1000 per voxel
+  splatProgram_.use();
+  setShadingUniforms(splatProgram_, in);
+  splatProgram_.set("uCount", static_cast<unsigned>(in.pointCount));
+  splatProgram_.set("uVolumeMin", glm::vec3(-0.5f * extent));
+  splatProgram_.set("uVolumeSize", extent);
+  splatProgram_.set("uResolution", res);
+  splatProgram_.set("uFixedScale", kFixedScale);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, pointsVbo_);
+  for (int c = 0; c < 3; ++c) glBindImageTexture(static_cast<GLuint>(c), volumeSums_[static_cast<size_t>(c)], 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+  glDispatchCompute(static_cast<GLuint>((in.pointCount + 255) / 256), 1, 1);
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+  const float voxel = extent / static_cast<float>(res);
+  volumeResolveProgram_.use();
+  volumeResolveProgram_.set("uResolution", res);
+  volumeResolveProgram_.set("uInvScaleVolume", settings.volumeGlow / (kFixedScale * voxel * voxel * voxel));
+  for (int c = 0; c < 3; ++c) glBindImageTexture(static_cast<GLuint>(c), volumeSums_[static_cast<size_t>(c)], 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+  glBindImageTexture(3, volumeEmission_, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+  const GLuint groups = static_cast<GLuint>((res + 7) / 8);
+  glDispatchCompute(groups, groups, groups);
+  glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+  return true;
+}
+
 void Renderer::ensureTargets(int width, int height) {
   if (hdr_.width == width && hdr_.height == height) return;
   hdr_.create(width, height, GL_RGBA16F, true);
@@ -320,8 +403,14 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_PROGRAM_POINT_SIZE);
 
+  // 0. Lensing of particles: splat them into the emission volume first.
+  const int lensSource = in.appearance.lensSource;
+  const bool volumeOn = settings.lensing && lensSource != Appearance::ThinDisk && in.pointCount > 0 &&
+                        splatParticles(in, settings);
+  glBindFramebuffer(GL_FRAMEBUFFER, hdr_.fbo);
+
   // 1. Background: the sky along straight rays, or the full ray-traced view
-  //    (lensed sky, shadow, thin disk) when lensing is on.
+  //    (lensed sky, shadow, thin disk, particle volume) when lensing is on.
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
   backgroundProgram_.use();
@@ -332,7 +421,18 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uSky", 0);
   backgroundProgram_.set("uSkyBrightness", settings.stars ? settings.skyBrightness : 0.0f);
   backgroundProgram_.set("uLensing", settings.lensing);
-  backgroundProgram_.set("uDisk", settings.lensedDisk);
+  backgroundProgram_.set("uDisk", lensSource != Appearance::Particles);
+  backgroundProgram_.set("uVolumeOn", volumeOn);
+  if (volumeOn) {
+    const float extent = std::max(in.appearance.volumeExtent, 1.0f);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, volumeEmission_);
+    glActiveTexture(GL_TEXTURE0);
+    backgroundProgram_.set("uVolume", 1);
+    backgroundProgram_.set("uVolumeMin", glm::vec3(-0.5f * extent));
+    backgroundProgram_.set("uVolumeSize", extent);
+    backgroundProgram_.set("uVoxel", extent / static_cast<float>(volumeRes_));
+  }
   const float isco = kerr::isco(settings.spin);
   backgroundProgram_.set("uDiskRadii", glm::vec2(settings.diskAtIsco ? isco : settings.diskInner, settings.diskOuter));
   backgroundProgram_.set("uSpin", settings.spin);
@@ -396,36 +496,13 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
 
   // 4. Particles: additive Gaussian splats, depth-tested against the horizon.
   if (in.pointCount > 0 && (!settings.lensing || settings.particlesWhenLensing)) {
-    const Appearance& a = in.appearance;
     glBlendFunc(GL_ONE, GL_ONE);
     pointsProgram_.use();
     pointsProgram_.set("uView", in.view);
     pointsProgram_.set("uProj", in.projection);
-    pointsProgram_.set("uCameraPos", in.cameraPos);
     pointsProgram_.set("uPixelsPerUnit",
                        static_cast<float>(in.height) / (2.0f * std::tan(in.fovYRadians * 0.5f)));
-    pointsProgram_.set("uPointSize", a.pointSize);
-    pointsProgram_.set("uPhotons", in.photons);
-    pointsProgram_.set("uScalarIsBrightness", in.scalarIsBrightness);
-    pointsProgram_.set("uStyle", static_cast<int>(a.style));
-    pointsProgram_.set("uQuantity", static_cast<int>(a.quantity));
-    pointsProgram_.set("uColormap", static_cast<int>(a.colormap));
-    const float span = std::fabs(a.rangeMax - a.rangeMin) < 1e-6f ? 1e-6f : a.rangeMax - a.rangeMin;
-    pointsProgram_.set("uRange", glm::vec2(a.rangeMin, a.rangeMin + span));
-    // Gas: total light must not depend on how finely we sample it. Each particle
-    // carries 1/N of the disk and its sprite covers ∝ size² pixels.
-    float brightness = a.brightness;
-    if (!in.photons) {
-      constexpr float kRefCount = 300000.0f, kRefSize = 0.12f;
-      const float sizeRatio = kRefSize / std::max(a.pointSize, 1e-4f);
-      brightness *= kRefCount / static_cast<float>(std::max<size_t>(in.pointCount, 1)) * sizeRatio * sizeRatio;
-    }
-    pointsProgram_.set("uBrightness", brightness);
-    pointsProgram_.set("uPeakTemperature", a.peakTemperature);
-    pointsProgram_.set("uBeaming", a.dopplerBeaming);
-    pointsProgram_.set("uColorShift", a.colorShift);
-    pointsProgram_.set("uLifetime", in.lifetime);
-    pointsProgram_.set("uFadeWithAge", a.fadeWithAge);
+    setShadingUniforms(pointsProgram_, in);
     glBindVertexArray(pointsVao_);
     glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(in.pointCount));
   }

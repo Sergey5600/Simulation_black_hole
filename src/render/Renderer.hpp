@@ -24,7 +24,8 @@ struct RenderSettings {
   // Gravitational lensing (ray-traced background and thin disk).
   bool lensing = false;
   float spin = 0.0f;                 // a/M of the ray-traced hole (Kerr when != 0)
-  bool lensedDisk = true;
+  int volumeResolution = 256;        // particle volume grid for lensing (N³ voxels)
+  float volumeGlow = 1.0f;           // brightness of lensed particles
   bool diskAtIsco = true;            // inner edge follows the ISCO of the spin
   float diskInner = 6.0f;
   float diskOuter = 30.0f;
@@ -96,10 +97,15 @@ class Renderer {
   void buildColormapStrips();
   void buildSky();
   void renderBloom(const RenderSettings& settings);
+  void setShadingUniforms(gl::Program& program, const FrameInput& in);
+  bool splatParticles(const FrameInput& in, const RenderSettings& settings);
 
   gl::Program pointsProgram_, starsProgram_, horizonProgram_, linesProgram_;
   gl::Program bloomDownProgram_, bloomUpProgram_, compositeProgram_, stripProgram_;
-  gl::Program skyGenProgram_, backgroundProgram_;
+  gl::Program skyGenProgram_, backgroundProgram_, splatProgram_, volumeResolveProgram_;
+  std::array<GLuint, 3> volumeSums_{};  // R32UI fixed-point light sums (r, g, b)
+  GLuint volumeEmission_ = 0;          // RGBA16F emissivity, trilinear-filtered
+  int volumeRes_ = 0;
   GLuint skyCubemap_ = 0;
 
   GLuint emptyVao_ = 0;

@@ -181,10 +181,14 @@ void drawRayTracing(UiContext& ctx) {
               "Rotation of the hole (Kerr metric), a = J/(Mc). Positive = same sense as the disk. The shadow "
               "gets lopsided, frame dragging twists the image and the ISCO moves in (1.24 M at a = 0.998). "
               "Ray tracer only for now: the particles still use the Schwarzschild metric.");
-    ToggleRow("Thin disk", &r.lensedDisk,
-              "Novikov-Thorne disk on Keplerian orbits, with the exact redshift of every ray (Doppler and "
-              "gravitational).");
-    if (r.lensedDisk) {
+    Appearance& a = ctx.appearance;
+    PropertyLabel("Light from",
+                  "What the ray tracer sees. Thin disk: analytic Novikov-Thorne disk with the exact redshift of "
+                  "every ray. Particles: the simulated particles, splatted into a 3D grid and lensed (multiple "
+                  "images, Einstein rings). Both: both at once.");
+    static const char* const kSources[] = {"Disk", "Particles", "Both"};
+    SegmentedControl("lensSource", &a.lensSource, kSources);
+    if (a.lensSource != Appearance::Particles) {
       ToggleRow("Inner edge at ISCO", &r.diskAtIsco,
                 "A thin disk ends at the innermost stable circular orbit (6 M without spin).");
       if (!r.diskAtIsco) SliderRow("Disk inner edge", &r.diskInner, 1.0f, 20.0f, "%.1f M");
@@ -197,9 +201,18 @@ void drawRayTracing(UiContext& ctx) {
       ToggleRow("Disk beaming", &r.diskBeaming, "Brightness scales as g^4.");
       ToggleRow("Disk color shift", &r.diskColorShift, "Observed temperature = g \xC2\xB7 T.");
     }
-    ToggleRow("Show particles", &r.particlesWhenLensing,
-              "Overlay the simulated particles. They are not lensed yet, so they will not line up with the "
-              "bent image.");
+    if (a.lensSource != Appearance::ThinDisk) {
+      SliderRow("Particle glow", &r.volumeGlow, 0.05f, 20.0f, "%.2f", true, "Brightness of the lensed particles.");
+      SliderRow("Volume size", &a.volumeExtent, 10.0f, 300.0f, "%.0f M", true,
+                "Edge of the cube around the hole that holds the lensed particles. Particles outside it are not "
+                "drawn; a smaller cube gives finer detail.");
+      SliderIntRow("Volume detail", &r.volumeResolution, 64, 384, false,
+                   "Voxels per edge. 256 = 16.7 M voxels, ~330 MB of video memory.");
+    } else {
+      ToggleRow("Show particles", &r.particlesWhenLensing,
+                "Overlay the simulated particles without lensing (they will not line up with the bent image). "
+                "Choose \"Particles\" above to lens them.");
+    }
     SliderRow("Ray step", &r.rayStepScale, 0.005f, 0.1f, "%.3f", true,
               "Integration step as a fraction of the distance to the hole. Smaller = sharper photon ring, "
               "slower.");

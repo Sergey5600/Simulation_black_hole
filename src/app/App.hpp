@@ -30,6 +30,7 @@ struct AppOptions {
   bool lensing = false;
   float spin = 0.0f;
   float rayStep = 0.0f;  // > 0 overrides the ray-tracing step
+  int lensSource = -1;   // -1: scenario default; else Appearance::LensSource
 
   // Video recording (--record): numbered frames + make_video.bat, then exit.
   std::string recordDir;

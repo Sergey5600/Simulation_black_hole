@@ -99,6 +99,7 @@ bool App::init() {
   }
   uiState_.showPanel = !options_.hideUi;
   render_.lensing = options_.lensing;
+  if (options_.lensSource >= 0) appearance().lensSource = options_.lensSource;
   render_.spin = options_.spin;
   if (options_.rayStep > 0.0f) render_.rayStepScale = options_.rayStep;
   return true;

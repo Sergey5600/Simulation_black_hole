@@ -25,7 +25,7 @@ GLuint compileStage(GLenum stage, std::initializer_list<const char*> parts, cons
     char log[4096];
     glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
     std::fprintf(stderr, "[shader] %s (%s) failed to compile:\n%s\n", debugName,
-                 stage == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+                 stage == GL_VERTEX_SHADER ? "vertex" : stage == GL_COMPUTE_SHADER ? "compute" : "fragment", log);
     glDeleteShader(shader);
     return 0;
   }
@@ -64,6 +64,26 @@ bool Program::build(const char* debugName, std::initializer_list<const char*> ve
   return true;
 }
 
+bool Program::buildCompute(const char* debugName, std::initializer_list<const char*> parts) {
+  const GLuint cs = compileStage(GL_COMPUTE_SHADER, parts, debugName);
+  if (!cs) return false;
+  id_ = glCreateProgram();
+  glAttachShader(id_, cs);
+  glLinkProgram(id_);
+  glDeleteShader(cs);
+  GLint ok = GL_FALSE;
+  glGetProgramiv(id_, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    char log[4096];
+    glGetProgramInfoLog(id_, sizeof(log), nullptr, log);
+    std::fprintf(stderr, "[shader] %s failed to link:\n%s\n", debugName, log);
+    glDeleteProgram(id_);
+    id_ = 0;
+    return false;
+  }
+  return true;
+}
+
 GLint Program::location(const char* name) {
   const auto it = locations_.find(name);
   if (it != locations_.end()) return it->second;
@@ -73,6 +93,7 @@ GLint Program::location(const char* name) {
 }
 
 void Program::set(const char* name, int v) { glUniform1i(location(name), v); }
+void Program::set(const char* name, unsigned v) { glUniform1ui(location(name), v); }
 void Program::set(const char* name, float v) { glUniform1f(location(name), v); }
 void Program::set(const char* name, const glm::vec2& v) { glUniform2fv(location(name), 1, glm::value_ptr(v)); }
 void Program::set(const char* name, const glm::vec3& v) { glUniform3fv(location(name), 1, glm::value_ptr(v)); }

@@ -33,6 +33,7 @@ void printUsage() {
       "  --lensing           start with ray-traced gravitational lensing on\n"
       "  --spin A            black hole spin a/M for the ray tracer (-0.998 .. 0.998)\n"
       "  --ray-step S        ray-tracing step as a fraction of r (smaller = sharper, slower)\n"
+      "  --lens-source S     what the ray tracer lenses: disk, particles or both\n"
       "\n"
       "Video recording (renders off-screen, resumable, then exits):\n"
       "  --record DIR        write frame_00000.jpg ... and make_video.bat into DIR\n"
@@ -79,6 +80,9 @@ int main(int argc, char** argv) {
       opt.lensing = true;
     } else if (!std::strcmp(a, "--spin")) {
       opt.spin = static_cast<float>(std::atof(next()));
+    } else if (!std::strcmp(a, "--lens-source")) {
+      const std::string s = next();
+      opt.lensSource = s == "particles" ? 1 : s == "both" ? 2 : 0;
     } else if (!std::strcmp(a, "--ray-step")) {
       opt.rayStep = static_cast<float>(std::atof(next()));
     } else if (!std::strcmp(a, "--record")) {

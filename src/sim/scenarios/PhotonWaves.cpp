@@ -85,6 +85,8 @@ ScenarioDefaults PhotonWaves::defaults() const {
   d.appearance.pointSize = 0.16f;
   d.appearance.brightness = 1.2f;
   d.appearance.fadeWithAge = true;
+  d.appearance.lensSource = Appearance::Particles;
+  d.appearance.volumeExtent = 90.0f;
   d.view = ViewPreset{0.0f, 1.3f, 75.0f};
   d.timeScale = 12.0f;
   d.timeMode = TimeMode::Coordinate;

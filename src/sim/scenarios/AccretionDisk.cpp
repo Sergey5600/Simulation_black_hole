@@ -60,6 +60,8 @@ ScenarioDefaults AccretionDisk::defaults() const {
   d.appearance.pointSize = 0.25f;
   d.appearance.brightness = 1.0f;
   d.appearance.peakTemperature = 5800.0f;
+  d.appearance.lensSource = Appearance::ThinDisk;
+  d.appearance.volumeExtent = 90.0f;
   d.view = ViewPreset{0.0f, 0.18f, 70.0f};
   d.timeScale = 30.0f;
   d.timeMode = TimeMode::Coordinate;
