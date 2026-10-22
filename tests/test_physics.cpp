@@ -4,7 +4,10 @@
 #include <cstdio>
 
 #include "backend/CpuBackend.hpp"
+#include "core/Fall.hpp"
 #include "core/Kerr.hpp"
+#include "core/Spectrum.hpp"
+#include "sim/Journey.hpp"
 #include "sim/Integrator.hpp"
 #include "sim/Spawn.hpp"
 
@@ -312,6 +315,117 @@ void testBackendSmoke() {
         static_cast<double>(alive), static_cast<double>(verts.size()));
 }
 
+void testSpectrum() {
+  using namespace spectrum;
+  checkNear("black body: 6500 K has luminance 1 (normalization)", luminance(planckRgb(6500.0)), 1.0, 1e-9);
+  const Rgb white = planckColor(6500.0), red = planckColor(3000.0), blue = planckColor(20000.0);
+  check(std::fmin(white.g, white.b) > 0.9, "black body: 6500 K is white (min channel)", std::fmin(white.g, white.b), 0.9);
+  check(red.r == 1.0 && red.b < 0.25, "black body: 3000 K is orange-red (blue channel)", red.b, 0.25);
+  check(blue.b == 1.0 && blue.r < 0.5, "black body: 20000 K is blue (red channel)", blue.r, 0.5);
+  // Seen 14x blueshifted (hovering at 2.01 M), 6500 K light is a 91000 K black
+  // body: ~166x brighter in the visible band, far from the bolometric 14⁴ = 38416.
+  checkNear("black body: visible brightening of 6500 K blueshifted to 91000 K",
+            luminance(planckRgb(91000.0)) / luminance(planckRgb(6500.0)), 165.7, 0.02);
+  checkNear("black body: Rayleigh-Jeans tail, L(10⁶ K) / L(5·10⁵ K) -> 2",
+            luminance(planckRgb(1e6)) / luminance(planckRgb(5e5)), 2.0, 0.02);
+  // The shader table spans the temperatures it is asked for.
+  checkNear("black body: lookup table ends at 100 K and 10⁶ K", lutTemperature(0) * lutTemperature(kLutSize - 1), 1e8, 1e-9);
+}
+
+// Backward ray from an observer at radius r looking along local direction
+// (dr outward, dPerp sideways), with the same frame formulas as lensing.frag.glsl:
+//   static: path ∝ r̂ sqrt(f) dr + d⊥;  falling with energy E: path ∝ r̂ (w + E dr) + d⊥.
+bool rayEscapes(double r, bool falling, double energy, double dr) {
+  const double dPerp = std::sqrt(1.0 - dr * dr);
+  const double f = 1.0 - 2.0 / r;
+  const double radial = falling ? std::sqrt(energy * energy - f) + energy * dr : std::sqrt(f) * dr;
+  Vec3 x{static_cast<float>(r), 0.0f, 0.0f};
+  Vec3 v = normalize(Vec3{static_cast<float>(radial), static_cast<float>(dPerp), 0.0f});
+  const float h2 = dot(cross(x, v), cross(x, v));
+  auto accel = [h2](Vec3 p) {
+    const float r2 = dot(p, p);
+    return p * (-3.0f * h2 / (r2 * r2 * std::sqrt(r2)));
+  };
+  for (int i = 0; i < 400000; ++i) {
+    const float rr = length(x);
+    if (rr < 2.0f && dot(x, v) < 0.0f) return false;
+    if (rr > 2000.0f && dot(x, v) > 0.0f) return true;
+    const float h = 0.002f * rr;
+    const Vec3 k1x = v, k1v = accel(x);
+    const Vec3 k2x = v + k1v * (0.5f * h), k2v = accel(x + k1x * (0.5f * h));
+    const Vec3 k3x = v + k2v * (0.5f * h), k3v = accel(x + k2x * (0.5f * h));
+    const Vec3 k4x = v + k3v * h, k4v = accel(x + k3x * h);
+    x = x + (k1x + k2x * 2.0f + k3x * 2.0f + k4x) * (h / 6.0f);
+    v = v + (k1v + k2v * 2.0f + k3v * 2.0f + k4v) * (h / 6.0f);
+  }
+  return false;
+}
+
+void testFall() {
+  checkNear("fall: proper time from the horizon to r = 0, from rest at infinity = 4/3 M",
+            fall::properTimeToSingularity(2.0, 1.0), 4.0 / 3.0, 1e-6);
+  checkNear("fall: dropped from rest at 10 M, proper time to r = 0 = π (r0/2M)^1.5 M",
+            fall::properTimeToSingularity(10.0, fall::energyFromRest(10.0)), kPi * std::pow(5.0, 1.5), 1e-4);
+  checkNear("fall: hovering at 2.5 M, the sky is a circle of 68.4° radius",
+            fall::staticSkyRadius(2.5) * 180.0 / kPi, 68.38, 1e-3);
+  checkNear("fall: hovering at 2.01 M, the sky is a circle of 10.5° radius",
+            fall::staticSkyRadius(2.01) * 180.0 / kPi, 10.50, 2e-3);
+  checkNear("fall: at the photon sphere the sky is exactly half the view", fall::staticSkyRadius(3.0), kPi / 2, 1e-6);
+  checkNear("fall: hovering at 2.01 M, outside clocks run 14.2x faster", fall::overheadShiftStatic(2.01), 14.177, 1e-3);
+  checkNear("fall: hover thrust at 4 M = M / (r² sqrt(1-2M/r))", fall::hoverAcceleration(4.0), 1.0 / (16.0 * std::sqrt(0.5)), 1e-9);
+  checkNear("fall: Sagittarius A* (4.3e6 suns) has M = 21.2 s", fall::Units(4.3e6).time, 21.18, 1e-3);
+
+  // The ray tracer's observer frames put the edge of the sky where the critical
+  // impact parameter b = 3√3 M says: b = r d⊥ / sqrt(f) (static),
+  // b = r d⊥ / (E + w dr) (falling). Rays just inside the edge escape.
+  const double bc = 3.0 * std::sqrt(3.0);
+  {
+    const double r = 2.5, psi = fall::staticSkyRadius(r);
+    check(rayEscapes(r, false, 0.0, std::cos(psi * 0.98)) && !rayEscapes(r, false, 0.0, std::cos(psi * 1.02)),
+          "fall: static observer at 2.5 M, rays escape just inside the sky edge", 1.0, 1.0);
+  }
+  for (double r : {2.5, 1.2}) {  // falling from rest at infinity, outside and inside the horizon
+    const double e = 1.0, w = fall::infallRate(r, e);
+    double lo = 0.0, hi = kPi;  // angle from outward with b(angle) = bc
+    for (int i = 0; i < 60; ++i) {
+      const double mid = 0.5 * (lo + hi);
+      const double b = r * std::sin(mid) / (e + w * std::cos(mid));
+      (b < bc ? lo : hi) = mid;
+    }
+    char what[96];
+    std::snprintf(what, sizeof(what), "fall: rain observer at %.1f M, rays escape just inside the sky edge", r);
+    check(rayEscapes(r, true, e, std::cos(lo * 0.98)) && !rayEscapes(r, true, e, std::cos(lo * 1.02)), what, 1.0, 1.0);
+  }
+}
+
+void testJourney() {
+  Journey j;
+  check(Journey::named("infall", 40.0f, j), "journey: infall exists", 1.0, 1.0);
+  const double tauInfall = j.at(1.0f).properTime - j.at(0.0f).properTime;
+  checkNear("journey: infall from 40 M to 0.5 M takes (2/3)(r0^1.5 - r1^1.5)/sqrt(2M) of proper time", tauInfall,
+            2.0 / 3.0 * (std::pow(40.0, 1.5) - std::pow(0.5, 1.5)) / std::sqrt(2.0), 1e-3);
+
+  check(Journey::named("hover", 40.0f, j), "journey: hover exists", 1.0, 1.0);
+  const JourneyFrame mid = j.at(0.5f), end = j.at(1.0f);
+  check(mid.hovering && std::fabs(mid.r - 2.01f) < 1e-4f && std::fabs(mid.gaze - kPi) < 1e-3,
+        "journey: hover at 2.01 M looking straight up", mid.r, 2.01);
+  const JourneyFrame a = j.at(0.45f), b = j.at(0.55f);
+  checkNear("journey: while hovering, outside time runs 14.2x faster",
+            (b.outsideTime - a.outsideTime) / (b.properTime - a.properTime), 14.177, 1e-3);
+  check(!end.hovering && end.r < 0.3f, "journey: hover ends falling deep inside the horizon", end.r, 0.25);
+  // Release at u = 0.62: compare the drop's duration with the closed-form fall time.
+  const double e = fall::energyFromRest(2.01);
+  const JourneyFrame release = j.at(0.62f);
+  checkNear("journey: drop from 2.01 M to 0.25 M matches the analytic proper time", end.properTime - release.properTime,
+            fall::properTimeToSingularity(2.01, e) - fall::properTimeToSingularity(0.25, e), 2e-3);
+  bool monotonic = true;
+  for (int i = 1; i <= 1000; ++i) {
+    const JourneyFrame p = j.at((i - 1) / 1000.0f), q = j.at(i / 1000.0f);
+    monotonic = monotonic && q.properTime >= p.properTime && q.outsideTime >= p.outsideTime && q.r <= p.r + 1e-6f;
+  }
+  check(monotonic, "journey: clocks run forward and r never grows", 1.0, 1.0);
+}
+
 }  // namespace
 
 int main() {
@@ -323,6 +437,9 @@ int main() {
   testKerr();
   testKerrParticles();
   testBackendSmoke();
+  testSpectrum();
+  testFall();
+  testJourney();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "ALL PASSED", g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;
 }

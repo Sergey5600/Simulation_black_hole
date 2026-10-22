@@ -4,6 +4,7 @@
 
 #include "render/Camera.hpp"
 #include "render/Renderer.hpp"
+#include "sim/Journey.hpp"
 #include "sim/Simulation.hpp"
 
 namespace bh::ui {
@@ -47,5 +48,10 @@ struct UiActions {
 };
 
 UiActions drawUi(UiContext& ctx);
+
+// Physical readout of a recorded journey (--hud), bottom left of the frame.
+// `solarMasses` turns geometric units into km, seconds and g; `exposureEv` is
+// the camera's automatic exposure correction (NaN: not shown).
+void drawJourneyHud(const JourneyFrame& frame, double solarMasses, float exposureEv);
 
 }  // namespace bh::ui

@@ -51,4 +51,13 @@ peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
 print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path infall':<28} peak {peak:3d}")
 sys.exit(0 if peak > 60 else 1)
 PY
+# Hover on engines near the horizon, then drop; with the physical readout.
+eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --record $OUT/hover --path hover --hud --record-size 240x136 --duration 0.5 --fps 8 --quality draft" > "$OUT/hover.log" 2>&1
+python3 -I - "$OUT/hover/frame_00002.jpg" <<'PY'
+import sys
+from PIL import Image
+peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
+print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path hover --hud':<28} peak {peak:3d}")
+sys.exit(0 if peak > 60 else 1)
+PY
 echo "all smoke renders passed ($OUT)"

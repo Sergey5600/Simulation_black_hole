@@ -10,6 +10,7 @@
 #include "core/Kerr.hpp"
 #include "core/Random.hpp"
 #include "core/Schwarzschild.hpp"
+#include "core/Spectrum.hpp"
 
 namespace bh {
 
@@ -28,7 +29,7 @@ bool Renderer::init() {
   using namespace shaders;
   bool ok = true;
   ok &= pointsProgram_.build("points", {common, particle_shading, points_vert}, {points_frag});
-  ok &= starsProgram_.build("stars", {stars_vert}, {points_frag});
+  ok &= starsProgram_.build("stars", {stars_vert}, {common, stars_frag});
   ok &= horizonProgram_.build("horizon", {fullscreen_vert}, {horizon_frag});
   ok &= linesProgram_.build("lines", {lines_vert}, {lines_frag});
   ok &= bloomDownProgram_.build("bloom_down", {fullscreen_vert}, {bloom_down_frag});
@@ -55,6 +56,7 @@ bool Renderer::init() {
   glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(PointVertex), reinterpret_cast<void*>(16));
   glBindVertexArray(0);
 
+  buildSpectrum();
   buildStars();
   buildGuides();
   buildColormapStrips();
@@ -64,9 +66,11 @@ bool Renderer::init() {
 
 void Renderer::shutdown() {
   hdr_.destroy();
+  meter_.destroy();
   for (auto& m : bloomMips_) m.destroy();
   glDeleteTextures(static_cast<GLsizei>(colormapStrips_.size()), colormapStrips_.data());
   glDeleteTextures(1, &skyCubemap_);
+  glDeleteTextures(1, &spectrumLut_);
   glDeleteTextures(3, volumeSums_.data());
   glDeleteTextures(1, &volumeEmission_);
   const GLuint vaos[] = {emptyVao_, pointsVao_, starsVao_, linesVao_};
@@ -101,11 +105,32 @@ void Renderer::endPointUpload() {
   if (mapped) glUnmapBuffer(GL_ARRAY_BUFFER);
 }
 
+// ln(black-body color) over 100 K .. 10⁶ K for the shaders (planckRgb in common.glsl).
+void Renderer::buildSpectrum() {
+  std::vector<float> lut(spectrum::kLutSize * 3);
+  for (int i = 0; i < spectrum::kLutSize; ++i) {
+    const spectrum::Rgb c = spectrum::planckRgb(spectrum::lutTemperature(i));
+    const double floor = 1e-30;
+    lut[3 * i + 0] = static_cast<float>(std::log(std::max(c.r, floor)));
+    lut[3 * i + 1] = static_cast<float>(std::log(std::max(c.g, floor)));
+    lut[3 * i + 2] = static_cast<float>(std::log(std::max(c.b, floor)));
+  }
+  glGenTextures(1, &spectrumLut_);
+  glBindTexture(GL_TEXTURE_1D, spectrumLut_);
+  glTexStorage1D(GL_TEXTURE_1D, 1, GL_RGB32F, spectrum::kLutSize);
+  glTexSubImage1D(GL_TEXTURE_1D, 0, 0, spectrum::kLutSize, GL_RGB, GL_FLOAT, lut.data());
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_1D, 0);
+}
+
 void Renderer::buildStars() {
   struct Star {
     float dir[3];
     float brightness;
     float color[3];
+    float temperature;  // 10⁴ K
   };
   constexpr int kStars = 9000;
   std::vector<Star> stars(kStars);
@@ -116,16 +141,24 @@ void Renderer::buildStars() {
     const float rho = std::sqrt(1.0f - z * z);
     const float u = rng.uniform();
     const float brightness = 0.04f + 0.96f * std::pow(u, 14.0f);  // most stars are faint
-    const float warm = rng.uniform();
-    const glm::vec3 tint = glm::mix(glm::vec3(0.62f, 0.75f, 1.0f), glm::vec3(1.0f, 0.78f, 0.55f), warm);
+    // Spectral classes roughly as among naked-eye stars: many K/M giants and
+    // G/F stars, fewer A, a few hot B/O. Each is a black body of its own temperature.
+    const float cls = rng.uniform();
+    const float spread = rng.uniform();
+    const float kelvin = cls < 0.38f ? 3300.0f + 1700.0f * spread
+                         : cls < 0.75f ? 5000.0f + 2500.0f * spread
+                         : cls < 0.94f ? 7500.0f + 4500.0f * spread
+                                       : 12000.0f + 18000.0f * spread * spread;
+    const spectrum::Rgb tint = spectrum::planckColor(kelvin);
     Star& s = stars[static_cast<size_t>(i)];
     s.dir[0] = rho * std::cos(phi);
     s.dir[1] = z;
     s.dir[2] = rho * std::sin(phi);
     s.brightness = brightness;
-    s.color[0] = tint.x * 0.6f;
-    s.color[1] = tint.y * 0.6f;
-    s.color[2] = tint.z * 0.6f;
+    s.color[0] = static_cast<float>(tint.r) * 0.6f;
+    s.color[1] = static_cast<float>(tint.g) * 0.6f;
+    s.color[2] = static_cast<float>(tint.b) * 0.6f;
+    s.temperature = kelvin * 1e-4f;
   }
   starCount_ = kStars;
 
@@ -137,7 +170,7 @@ void Renderer::buildStars() {
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(Star), reinterpret_cast<void*>(0));
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Star), reinterpret_cast<void*>(16));
+  glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Star), reinterpret_cast<void*>(16));
   glBindVertexArray(0);
 }
 
@@ -234,6 +267,11 @@ void Renderer::buildSky() {
   glViewport(0, 0, kFace, kFace);
   glDisable(GL_DEPTH_TEST);
   glEnable(GL_PROGRAM_POINT_SIZE);
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_1D, spectrumLut_);
+  glActiveTexture(GL_TEXTURE0);
+  skyGenProgram_.use();
+  skyGenProgram_.set("uSpectrum", 2);
   for (int face = 0; face < 6; ++face) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, skyCubemap_,
                            0);
@@ -368,6 +406,24 @@ void Renderer::downsample(GLuint srcTexture, int factor, const gl::RenderTarget&
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+float Renderer::meterLuminance(float quantile) {
+  if (hdr_.width == 0) return 0.0f;
+  const int factor = std::max(1, hdr_.width / 64);
+  const int w = std::max(1, hdr_.width / factor), h = std::max(1, hdr_.height / factor);
+  if (meter_.width != w || meter_.height != h) meter_.create(w, h, GL_RGBA32F, false);
+  downsample(hdr_.color, factor, meter_);
+  std::vector<float> pixels(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, meter_.fbo);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glReadPixels(0, 0, w, h, GL_RGBA, GL_FLOAT, pixels.data());
+  std::vector<float> lum(static_cast<size_t>(w) * static_cast<size_t>(h));
+  for (size_t i = 0; i < lum.size(); ++i)
+    lum[i] = 0.2126f * pixels[4 * i] + 0.7152f * pixels[4 * i + 1] + 0.0722f * pixels[4 * i + 2];
+  const size_t k = std::min(lum.size() - 1, static_cast<size_t>(std::clamp(quantile, 0.0f, 1.0f) * static_cast<float>(lum.size())));
+  std::nth_element(lum.begin(), lum.begin() + static_cast<std::ptrdiff_t>(k), lum.end());
+  return lum[k];
+}
+
 void Renderer::ensureTargets(int width, int height) {
   if (hdr_.width == width && hdr_.height == height) return;
   hdr_.create(width, height, GL_RGBA16F, true);
@@ -453,7 +509,12 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uSky", 0);
   backgroundProgram_.set("uSkyBrightness", settings.stars ? settings.skyBrightness : 0.0f);
   backgroundProgram_.set("uLensing", settings.lensing);
-  backgroundProgram_.set("uRainFrame", in.rainFrame);
+  backgroundProgram_.set("uFalling", in.falling);
+  backgroundProgram_.set("uFallEnergy", in.fallEnergy);
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_1D, spectrumLut_);
+  glActiveTexture(GL_TEXTURE0);
+  backgroundProgram_.set("uSpectrum", 2);
   backgroundProgram_.set("uDisk", lensSource != Appearance::Particles);
   backgroundProgram_.set("uVolumeOn", volumeOn);
   // The 3D sampler must never share unit 0 with the cube map, even when unused:
@@ -475,8 +536,20 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uIsco", isco);
   // A smaller ISCO makes the hottest ring (6/r_isco)³ times brighter (same accretion
   // rate). Like a camera, partially expose for it; colors stay physical.
-  const float exposureComp = settings.diskAutoExposure ? std::pow(isco / 6.0f, 1.5f) : 1.0f;
+  // Visible spectrum: compensate by the visible-light ratio of the hottest ring instead
+  // (its temperature scales as (6M / r_isco)^¾).
+  float exposureComp = 1.0f;
+  const double peakKelvin = settings.diskTemperature;
+  const double peakLuminance = spectrum::luminance(spectrum::planckRgb(peakKelvin));
+  if (settings.diskAutoExposure) {
+    exposureComp = settings.diskVisibleSpectrum
+                       ? static_cast<float>(peakLuminance / spectrum::luminance(spectrum::planckRgb(
+                                                                peakKelvin * std::pow(6.0 / isco, 0.75))))
+                       : std::pow(isco / 6.0f, 1.5f);
+  }
   backgroundProgram_.set("uDiskBrightness", settings.diskBrightness * exposureComp);
+  backgroundProgram_.set("uVisibleSpectrum", settings.diskVisibleSpectrum);
+  backgroundProgram_.set("uSpectrumNorm", static_cast<float>(1.0 / std::max(peakLuminance, 1e-30)));
   backgroundProgram_.set("uPeakTemperature", settings.diskTemperature);
   backgroundProgram_.set("uBeaming", settings.diskBeaming);
   backgroundProgram_.set("uColorShift", settings.diskColorShift);

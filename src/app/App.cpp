@@ -28,6 +28,7 @@
 #include "sim/scenarios/PhotonWaves.hpp"
 #include "sim/scenarios/StarDisruption.hpp"
 #include "ui/Theme.hpp"
+#include "ui/Ui.hpp"
 
 namespace bh {
 
@@ -115,6 +116,7 @@ bool App::init() {
   render_.lensing = options_.lensing;
   if (options_.lensSource >= 0) appearance().lensSource = options_.lensSource;
   if (options_.rayStep > 0.0f) render_.rayStepScale = options_.rayStep;
+  render_.diskVisibleSpectrum = !options_.classicDisk;
   return true;
 }
 
@@ -231,6 +233,24 @@ void App::onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int /
   }
 }
 
+void App::drawOverlay(const gl::RenderTarget& target, const std::function<void()>& draw) {
+  ImGuiIO& io = ImGui::GetIO();
+  io.DisplaySize = ImVec2(static_cast<float>(target.width), static_cast<float>(target.height));
+  io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+  io.DeltaTime = 1.0f / 60.0f;
+  ImGui_ImplOpenGL3_NewFrame();
+  // Auto-sized windows measure themselves during their first frame and stay
+  // hidden in it: lay out once without drawing.
+  ImGui::NewFrame();
+  draw();
+  ImGui::EndFrame();
+  ImGui::NewFrame();
+  draw();
+  ImGui::Render();
+  glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
 void App::takeScreenshot(const std::string& path, int width, int height) {
   if (saveScreenshot(path, width, height)) {
     std::printf("Saved %s\n", path.c_str());
@@ -301,29 +321,24 @@ bool qualityPreset(const std::string& name, QualityPreset& q) {
 
 }  // namespace
 
-// First-person fall into the hole: radial free fall from rest at infinity
-// (rain frame), along a line `base.pitch` above the disk plane. The distance
-// shrinks exponentially from base.distance to 0.5 M (slow motion near the
-// horizon), and the gaze turns from the hole towards the side as it closes in,
-// so the shadow does not simply swallow the whole frame.
-void App::setInfallCamera(FrameInput& in, const ViewPreset& base, float u) {
-  const float r0 = std::max(base.distance, 4.0f), r1 = 0.5f;
-  const float r = r0 * std::pow(r1 / r0, u);
+// First-person journey camera on the radial line `base.yaw`/`base.pitch`
+// (`base.pitch` above the disk plane). The gaze turns in the plane of that line
+// and the horizontal side direction: 0 looks at the hole, π straight out.
+void App::setJourneyCamera(FrameInput& in, const ViewPreset& base, const JourneyFrame& f) {
   const float cp = std::cos(base.pitch);
-  const glm::vec3 fall(cp * std::sin(base.yaw), std::sin(base.pitch), cp * std::cos(base.yaw));
-  const glm::vec3 pos = fall * r;
-  const glm::vec3 up(0.0f, 1.0f, 0.0f);
-  const glm::vec3 side = glm::normalize(glm::cross(up, fall));
-  const float s = std::clamp((14.0f - r) / (14.0f - 1.5f), 0.0f, 1.0f);
-  const float turn = 1.15f * s * s * (3.0f - 2.0f * s);  // smoothstep, radians
-  const glm::vec3 forward = glm::normalize(-fall * std::cos(turn) + side * std::sin(turn));
+  const glm::vec3 radial(cp * std::sin(base.yaw), std::sin(base.pitch), cp * std::cos(base.yaw));
+  const glm::vec3 pos = radial * f.r;
+  const glm::vec3 side = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), radial));
+  const glm::vec3 up = glm::normalize(glm::cross(radial, side));  // perpendicular to every gaze
+  const glm::vec3 forward = glm::normalize(-radial * std::cos(f.gaze) + side * std::sin(f.gaze));
   const float fov = glm::radians(75.0f);
   const float aspect = static_cast<float>(in.width) / static_cast<float>(in.height);
   in.view = glm::lookAt(pos, pos + forward, up);
   in.projection = glm::perspective(fov, aspect, 0.01f, 5000.0f);  // sub-pixel jitter is added afterwards
   in.cameraPos = pos;
   in.fovYRadians = fov;
-  in.rainFrame = true;
+  in.falling = !f.hovering;
+  in.fallEnergy = f.energy;
 }
 
 int App::record() {
@@ -332,9 +347,11 @@ int App::record() {
   if (!std::isnan(options_.yaw)) base.yaw = options_.yaw;
   if (!std::isnan(options_.pitch)) base.pitch = options_.pitch;
   if (!std::isnan(options_.distance)) base.distance = options_.distance;
-  const bool infall = options_.cameraPath == "infall";
-  if (!infall && !CameraPath::named(options_.cameraPath, base, path)) {
-    std::fprintf(stderr, "Unknown camera path '%s' (available: %s)\n", options_.cameraPath.c_str(), CameraPath::names());
+  Journey journey;
+  const bool firstPerson = Journey::named(options_.cameraPath, base.distance, journey);
+  if (!firstPerson && !CameraPath::named(options_.cameraPath, base, path)) {
+    std::fprintf(stderr, "Unknown camera path '%s' (available: %s, %s)\n", options_.cameraPath.c_str(),
+                 CameraPath::names(), Journey::names());
     return 2;
   }
   QualityPreset q{};
@@ -356,11 +373,19 @@ int App::record() {
   render_.spin = sim_->runSpin();
   RenderSettings settings = render_;
   settings.rayTileSize = 256;
-  if (infall) {
-    if (!settings.lensing) std::printf("infall: turning gravitational lensing on\n");
-    if (settings.spin != 0.0f) std::printf("infall: the falling camera uses a non-spinning hole (spin set to 0)\n");
+  if (firstPerson) {
+    const char* name = options_.cameraPath.c_str();
+    if (!settings.lensing) std::printf("%s: turning gravitational lensing on\n", name);
+    if (settings.spin != 0.0f) std::printf("%s: the first-person camera uses a non-spinning hole (spin set to 0)\n", name);
     settings.lensing = true;
     settings.spin = 0.0f;
+  }
+  const bool hud = options_.hud && firstPerson;
+  if (options_.hud && !firstPerson) std::printf("--hud: only first-person journeys (%s) have a readout\n", Journey::names());
+  if (hud) {
+    // Fonts sized for the output frame; the UI backend rebuilds its atlas on the next frame.
+    ui::applyTheme(std::max(0.8f, 1.25f * static_cast<float>(outH) / 1080.0f));
+    ImGui_ImplOpenGL3_DestroyFontsTexture();
   }
   if (options_.rayStep <= 0.0f) {
     settings.rayStepScale = q.rayStep;
@@ -379,6 +404,37 @@ int App::record() {
               "path '%s' -> %s\n",
               frames, outW, outH, options_.quality.c_str(), ssaa, samples, shutter, settings.rayStepScale,
               options_.cameraPath.c_str(), options_.recordDir.c_str());
+  // Sub-frame k of frame f into `target` (HDR result stays in the renderer for metering).
+  auto renderSubframe = [&](int f, int k) {
+    // Sub-frame time inside the shutter, in frames (centered on the frame).
+    const float offset = samples > 1 ? ((static_cast<float>(k) + 0.5f) / static_cast<float>(samples) - 0.5f) * shutter : 0.0f;
+    const float u = frames > 1 ? (static_cast<float>(f) + offset) / static_cast<float>(frames - 1) : 0.0f;
+    if (!firstPerson) camera_.setView(path.evaluate(std::clamp(u, 0.0f, 1.0f)), true);
+
+    FrameInput in = makeFrameInput(bigW, bigH);
+    if (firstPerson) setJourneyCamera(in, base, journey.at(std::clamp(u, 0.0f, 1.0f)));
+    in.dpiScale = dpiScale_ * static_cast<float>(ssaa);
+    in.time += offset * simDt;
+    if (samples > 1) {  // sub-pixel jitter: shift the projection by a fraction of a pixel
+      in.projection[2][0] += (halton(k + 1, 2) - 0.5f) * 2.0f / static_cast<float>(bigW);
+      in.projection[2][1] += (halton(k + 1, 3) - 0.5f) * 2.0f / static_cast<float>(bigH);
+    }
+    renderer_.render(in, settings, target.fbo);
+  };
+
+  // Auto exposure, like a video camera: meter the highlights of each frame and
+  // follow them smoothly (time constant 0.4 s). Brightens by at most 2 EV, so
+  // a fading, redshifted sky still reads as fading.
+  const bool autoExposure = options_.autoExposure < 0 ? firstPerson : options_.autoExposure > 0;
+  const float baseExposure = settings.exposure;
+  float exposureEv = 0.0f;
+  bool metered = false;
+  auto meteredEv = [&] {
+    constexpr float kHighlight = 2.5f;  // the 99.5% brightest light lands here (ACES shoulder)
+    const float highlights = std::max(renderer_.meterLuminance(0.995f) * baseExposure, 1e-8f);
+    return std::clamp(std::log2(kHighlight / highlights), -20.0f, 2.0f);
+  };
+
   const double start = glfwGetTime();
   int rendered = 0;
   for (int f = 0; f < frames && !glfwWindowShouldClose(window_); ++f) {
@@ -391,29 +447,28 @@ int App::record() {
     if (std::filesystem::exists(file)) continue;  // resume
 
     uploadPoints();
+    if (autoExposure && !metered) {  // first frame (or first after a resume): meter before shooting
+      renderSubframe(f, 0);
+      exposureEv = meteredEv();
+      metered = true;
+    }
+    settings.exposure = baseExposure * std::exp2(exposureEv);
     if (samples > 1) {
       glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
       glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
       glClear(GL_COLOR_BUFFER_BIT);
     }
     for (int k = 0; k < samples; ++k) {
-      // Sub-frame time inside the shutter, in frames (centered on the frame).
-      const float offset = samples > 1 ? ((static_cast<float>(k) + 0.5f) / static_cast<float>(samples) - 0.5f) * shutter : 0.0f;
-      const float u = frames > 1 ? (static_cast<float>(f) + offset) / static_cast<float>(frames - 1) : 0.0f;
-      if (!infall) camera_.setView(path.evaluate(std::clamp(u, 0.0f, 1.0f)), true);
-
-      FrameInput in = makeFrameInput(bigW, bigH);
-      if (infall) setInfallCamera(in, base, std::clamp(u, 0.0f, 1.0f));
-      in.dpiScale = dpiScale_ * static_cast<float>(ssaa);
-      in.time += offset * simDt;
-      if (samples > 1) {  // sub-pixel jitter: shift the projection by a fraction of a pixel
-        in.projection[2][0] += (halton(k + 1, 2) - 0.5f) * 2.0f / static_cast<float>(bigW);
-        in.projection[2][1] += (halton(k + 1, 3) - 0.5f) * 2.0f / static_cast<float>(bigH);
-      }
-      renderer_.render(in, settings, target.fbo);
+      renderSubframe(f, k);
       if (samples > 1) renderer_.accumulate(target.color, accum, 1.0f / static_cast<float>(samples));
     }
+    const float frameEv = exposureEv;
+    if (autoExposure) exposureEv += (meteredEv() - exposureEv) * (1.0f - std::exp(-1.0f / (0.4f * static_cast<float>(options_.recordFps))));
     renderer_.downsample(samples > 1 ? accum.color : target.color, ssaa, out);
+    if (hud) {
+      const float u = frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f;
+      drawOverlay(out, [&] { ui::drawJourneyHud(journey.at(u), options_.solarMasses, autoExposure ? frameEv : NAN); });
+    }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, out.fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);

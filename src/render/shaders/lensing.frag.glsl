@@ -30,6 +30,8 @@ uniform float uPeakTemperature;
 uniform bool uBeaming;
 uniform bool uColorShift;
 uniform float uTime;           // drives the differential rotation of the disk texture
+uniform bool uVisibleSpectrum; // exact black-body light instead of the bolometric T⁴ g⁴ look
+uniform float uSpectrumNorm;   // 1 / luminance of a black body at uPeakTemperature
 
 uniform int uMaxSteps;
 uniform float uStepScale;      // affine step as a fraction of r
@@ -38,23 +40,29 @@ uniform float uSpin;           // a/M, along +y (the disk's rotation axis)
 uniform float uHorizon;        // r+ = 1 + sqrt(1 - a²)
 uniform float uIsco;           // sets the temperature profile
 
-// Camera frame. false: a static observer at uCameraPos. true: an observer in
-// radial free fall from rest at infinity (the Painleve-Gullstrand "rain" frame),
-// which works inside the horizon too.
-uniform bool uRainFrame;
+// Camera frame. false: a static observer at uCameraPos (hovering on engines).
+// true: an observer in radial free fall with energy uFallEnergy per unit mass
+// (1 = from rest at infinity, the Painleve-Gullstrand "rain" frame;
+// sqrt(1 - 2M/r0) = dropped from rest at r0), which works inside the horizon too.
+uniform bool uFalling;
+uniform float uFallEnergy;
 
 // Frequency ratio ν_camera / E for the current pixel's photon (set in main()).
 float gCamera = 1.0;
 
-// Light from the sky or the particles as seen by a moving or deep camera:
-// treated as ~6500 K black-body light, re-colored to 6500·g K, brightness ∝ g⁴.
-vec3 frequencyShift(vec3 c, float g) {
-    if (abs(g - 1.0) < 1e-3) return c;
-    vec3 tint = blackbody(6500.0 * g) / max(blackbody(6500.0), vec3(1e-4));
-    return c * tint * min(g * g * g * g, 64.0);
+// The sky as seen with frequency ratio g. Every texel is shifted as a black
+// body at its own light-weighted temperature (alpha = luminance x T / 10⁴ K),
+// so a blueshifted red giant turns white and a hot star blue-violet.
+vec3 skyLight(vec3 dir, float g) {
+    vec4 texel = textureLod(uSky, dir, 0.0);
+    vec3 c = texel.rgb * uSkyBrightness;
+    float lum = dot(texel.rgb, kLuma);
+    if (lum <= 0.0) return vec3(0.0);
+    return shiftBlackbody(c, clamp(texel.a / lum * 1e4, 1000.0, 40000.0), g);
 }
 
-vec3 sky(vec3 dir) { return textureLod(uSky, dir, 0.0).rgb * uSkyBrightness; }
+// The particles' light carries no temperature per voxel: shift it as 6500 K light.
+vec3 particleShift(vec3 c, float g) { return shiftBlackbody(c, 6500.0, g); }
 
 // Light emitted by the particle volume along the (short, straight) chord a -> b
 // of a ray step, in world coordinates. Optically thin: just integrate emissivity.
@@ -86,6 +94,15 @@ vec3 diskShade(float r, float phi, float omega, float g) {
     float edge = smoothstep(uDiskRadii.y, uDiskRadii.y * 0.8, r) * smoothstep(uDiskRadii.x, uDiskRadii.x * 1.04, r);
 
     float t = diskTemperatureIn(r, uIsco, uHorizon);
+    if (uVisibleSpectrum) {
+        // Optically thick black body: the observed light is exactly planck(g T).
+        // Normalized so the hottest ring of a non-spinning disk has luminance 1 at g = 1.
+        vec3 emitted = planckRgb(t * uPeakTemperature);
+        vec3 observed = planckRgb(t * g * uPeakTemperature);
+        vec3 hue = uColorShift ? observed / max(dot(observed, kLuma), 1e-30) : emitted / max(dot(emitted, kLuma), 1e-30);
+        float lum = dot(uBeaming ? observed : emitted, kLuma);
+        return max(hue, vec3(0.0)) * (lum * uSpectrumNorm * uDiskBrightness * turbulence * edge);
+    }
     float tObserved = t * (uColorShift ? g : 1.0);
     float intensity = uDiskBrightness * t * t * t * t * turbulence * edge * (uBeaming ? g * g * g * g : 1.0);
     return blackbody(tObserved * uPeakTemperature) * intensity;
@@ -170,15 +187,15 @@ vec3 kerrDiskEmission(vec3 X, float lz, float a) {
 // future horizon cleanly. E, L_z (up to sign), the Boyer-Lindquist radius of the
 // disk crossing and the escape direction are the same in both pictures; only
 // the azimuth near the hole is twisted, which an axisymmetric disk does not mind.
-vec3 traceKerr(vec3 dir) {
+vec3 traceKerr(vec3 dir, out vec3 light) {
     float a = -uSpin;  // mirrored hole
     vec3 X = toKS(uCameraPos);
     vec3 p = ksNullMomentum(X, toKS(dir), a);
     float escapeRadius = max(length(uCameraPos), max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
-    vec3 light = vec3(0.0);
+    light = vec3(0.0);  // particle volume, integrated along the ray
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = ksRadius(X, a);
-        if (r < uHorizon) return light;  // crossed the horizon: shadow
+        if (r < uHorizon) return vec3(0.0);  // crossed the horizon: shadow
         float h = uStepScale * r;
         vec3 X0 = X, p0 = p;
         vec3 dx1, dp1, dx2, dp2, dx3, dp3, dx4, dp4;
@@ -196,54 +213,59 @@ vec3 traceKerr(vec3 dir) {
             vec3 pd = mix(p0, p, s);
             float rd = ksRadius(Xd, a);
             // The physical photon runs the other way: L_z flips sign.
-            if (rd > uDiskRadii.x && rd < uDiskRadii.y) return light + kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
+            if (rd > uDiskRadii.x && rd < uDiskRadii.y) return kerrDiskEmission(Xd, -(Xd.x * pd.y - Xd.y * pd.x), uSpin);
         }
         vec3 step = X - X0;
-        if (r > escapeRadius && dot(X, step) > 0.0) return light + sky(fromKS(normalize(step)));
+        if (r > escapeRadius && dot(X, step) > 0.0) return skyLight(fromKS(normalize(step)), gCamera);
     }
-    return light;
+    return vec3(0.0);
 }
 
 void main() {
     vec4 farPoint = uInvViewProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
     vec3 dir = normalize(farPoint.xyz / farPoint.w - uCameraPos);
     if (!uLensing) {
-        fragColor = vec4(sky(dir), 1.0);
+        fragColor = vec4(skyLight(dir, 1.0), 1.0);
         return;
     }
-    if (abs(uSpin) > 1e-4 && !uRainFrame) {
+    if (abs(uSpin) > 1e-4 && !uFalling) {
         gCamera = 1.0 / sqrt(max(1.0 - 2.0 / length(uCameraPos), 1e-4));  // static camera
-        fragColor = vec4(traceKerr(dir), 1.0);
+        vec3 particles;
+        vec3 color = traceKerr(dir, particles);
+        fragColor = vec4(color + particleShift(particles, gCamera), 1.0);
         return;
     }
 
     // From the camera's local frame to the starting direction of the ray's
     // spatial path (pseudo-Cartesian Schwarzschild), plus the camera's frequency
-    // factor. With d_r the radial (outward) part of the pixel direction:
-    //   static observer: path ∝ r̂ sqrt(1-2M/r) d_r + d_⊥,  g = 1/sqrt(1-2M/r)
-    //   rain observer:   path ∝ r̂ (d_r + β) + d_⊥,         g = 1/(1 + β d_r), β = sqrt(2M/r)
+    // factor. With d_r the radial (outward) part of the pixel direction and
+    // f = 1 - 2M/r:
+    //   static observer:          path ∝ r̂ sqrt(f) d_r + d_⊥,     g = 1/sqrt(f)
+    //   radial fall, energy E:    path ∝ r̂ (w + E d_r) + d_⊥,     g = 1/(E + w d_r),
+    //                             w = sqrt(E² - f) = -dr/dτ  (E = 1: w = β = sqrt(2M/r))
     vec3 x = uCameraPos;
     float rCam = length(x);
     vec3 n = x / rCam;
     float dr = dot(dir, n);
     vec3 dPerp = dir - n * dr;
     vec3 v;
-    if (uRainFrame) {
-        float beta = sqrt(2.0 / rCam);
-        float denominator = 1.0 + beta * dr;  // = E / ν_camera
-        // Inside the horizon (β > 1), looking towards the center: such photons
-        // would carry negative energy E; they could only come from a white hole,
+    if (uFalling) {
+        float E = uFallEnergy;
+        float w = sqrt(max(E * E - (1.0 - 2.0 / rCam), 0.0));
+        float denominator = E + w * dr;  // = E_photon / ν_camera
+        // Inside the horizon (w > E), looking towards the center: such photons
+        // would carry negative energy; they could only come from a white hole,
         // which real black holes do not have. That cone is the shadow ahead.
         if (denominator <= 0.02) {
             fragColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
-        v = normalize(n * (dr + beta) + dPerp);
-        gCamera = min(1.0 / denominator, 20.0);
+        v = normalize(n * (w + E * dr) + dPerp);
+        gCamera = min(1.0 / denominator, 25.0);
     } else {
         float f = max(1.0 - 2.0 / rCam, 1e-4);
         v = normalize(n * (sqrt(f) * dr) + dPerp);
-        gCamera = 1.0 / sqrt(f);
+        gCamera = min(1.0 / sqrt(f), 25.0);
     }
 
     vec3 Lv = cross(x, v);
@@ -259,7 +281,7 @@ void main() {
         if (r < 2.0005 && dot(x, v) < 0.0) break;
         if (r < 0.05) break;
         if (r > escapeRadius && dot(x, v) > 0.0) {
-            color += frequencyShift(sky(normalize(v)), gCamera);
+            color += skyLight(normalize(v), gCamera);
             break;
         }
 
@@ -285,5 +307,5 @@ void main() {
             }
         }
     }
-    fragColor = vec4(color + frequencyShift(particles, gCamera), 1.0);
+    fragColor = vec4(color + particleShift(particles, gCamera), 1.0);
 }

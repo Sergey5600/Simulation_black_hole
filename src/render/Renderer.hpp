@@ -34,6 +34,9 @@ struct RenderSettings {
   bool diskAutoExposure = true;      // compensate the much brighter inner disk of spinning holes
   bool diskBeaming = true;
   bool diskColorShift = true;
+  // true: exact visible light of a black body seen with shift g (planck(g T));
+  // false: the classic look, color of g T with bolometric brightness T⁴ g⁴.
+  bool diskVisibleSpectrum = true;
   bool particlesWhenLensing = false;  // overlay the (unlensed) particles
   int rayMaxSteps = 600;
   float rayStepScale = 0.035f;
@@ -62,7 +65,11 @@ struct FrameInput {
   int height = 1;
   float dpiScale = 1.0f;
   float time = 0.0f;              // simulation time (animates the ray-traced disk)
-  bool rainFrame = false;         // camera in radial free fall from infinity (lensing only)
+  // Lensing camera: a static observer at cameraPos (hovering), or with `falling`
+  // an observer in radial free fall with energy `fallEnergy` per unit mass
+  // (1 = from rest at infinity), which also works inside the horizon.
+  bool falling = false;
+  float fallEnergy = 1.0f;
 };
 
 // HDR point renderer: stars -> horizon -> guides -> additive particle splats
@@ -93,11 +100,17 @@ class Renderer {
   void accumulate(GLuint srcTexture, const gl::RenderTarget& dst, float weight);
   void downsample(GLuint srcTexture, int factor, const gl::RenderTarget& dst);
 
+  // Light meter for auto exposure: linear luminance of the last rendered frame
+  // (before exposure), box-filtered to ~64 pixels across; returns its quantile
+  // (e.g. 0.995 = the highlights).
+  float meterLuminance(float quantile);
+
   // 256x1 sRGB strips used as legends in the UI (ImTextureID-compatible).
   GLuint colormapTexture(Colormap c) const { return colormapStrips_[static_cast<size_t>(c)]; }
 
  private:
   void ensureTargets(int width, int height);
+  void buildSpectrum();
   void buildStars();
   void buildGuides();
   void buildColormapStrips();
@@ -114,6 +127,7 @@ class Renderer {
   GLuint volumeEmission_ = 0;          // RGBA16F emissivity, trilinear-filtered
   int volumeRes_ = 0;
   GLuint skyCubemap_ = 0;
+  GLuint spectrumLut_ = 0;  // black-body colors, see core/Spectrum.hpp
 
   GLuint emptyVao_ = 0;
   GLuint pointsVao_ = 0, pointsVbo_ = 0;
@@ -130,6 +144,7 @@ class Renderer {
   LineRange horizonRing_, photonRing_, iscoRing_, grid_;
 
   gl::RenderTarget hdr_;
+  gl::RenderTarget meter_;
   // Enough levels that the smallest is ~16 px tall, so the glow has the same
   // relative size at 1080p and at 8K.
   std::vector<gl::RenderTarget> bloomMips_;

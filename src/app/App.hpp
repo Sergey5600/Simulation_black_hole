@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -8,6 +9,7 @@
 
 #include "render/Camera.hpp"
 #include "render/Renderer.hpp"
+#include "sim/Journey.hpp"
 #include "sim/Simulation.hpp"
 #include "ui/Ui.hpp"
 
@@ -31,6 +33,7 @@ struct AppOptions {
   float spin = 0.0f;
   float rayStep = 0.0f;  // > 0 overrides the ray-tracing step
   int lensSource = -1;   // -1: scenario default; else Appearance::LensSource
+  bool classicDisk = false;  // bolometric T⁴ g⁴ disk instead of the exact visible spectrum
 
   // Video recording (--record): numbered frames + make_video.bat, then exit.
   std::string recordDir;
@@ -42,8 +45,11 @@ struct AppOptions {
   int ssaa = 0;                    // supersampling: render at ssaa x the size, box-filter down (0 = preset)
   int samples = 0;                 // jittered sub-frames per frame (anti-aliasing + motion blur; 0 = preset)
   float shutter = -1.0f;           // motion blur: fraction of the frame interval (< 0 = preset)
-  std::string cameraPath = "flyby";
+  std::string cameraPath = "flyby";  // a CameraPath or a first-person Journey
   std::string frameFormat;         // jpg or png (empty = preset)
+  bool hud = false;                // physical readout on journey frames
+  int autoExposure = -1;           // -1: on for first-person journeys only; 0 off; 1 on
+  double solarMasses = 4.3e6;      // hole mass for the readout's units (Sagittarius A*)
 };
 
 class App {
@@ -66,8 +72,10 @@ class App {
   void uploadPoints();
   FrameInput makeFrameInput(int width, int height);
   int record();
-  void setInfallCamera(FrameInput& in, const ViewPreset& base, float u);
+  void setJourneyCamera(FrameInput& in, const ViewPreset& base, const JourneyFrame& f);
   void takeScreenshot(const std::string& path, int width, int height);
+  // Draws ImGui content (e.g. the journey readout) on top of an off-screen target.
+  void drawOverlay(const gl::RenderTarget& target, const std::function<void()>& draw);
 
   Appearance& appearance() { return appearances_[sim_->currentIndex()]; }
 

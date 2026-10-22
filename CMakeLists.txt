@@ -28,6 +28,7 @@ target_include_directories(bh_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # ---------------------------------------------------------------------------
 add_library(bh_sim STATIC
   src/sim/Simulation.cpp
+  src/sim/Journey.cpp
   src/sim/scenarios/AccretionDisk.cpp
   src/sim/scenarios/PhotonWaves.cpp
   src/sim/scenarios/StarDisruption.cpp

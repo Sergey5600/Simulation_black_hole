@@ -1,8 +1,11 @@
 #include "ui/Ui.hpp"
 
+#include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
+#include "core/Fall.hpp"
 #include "ui/Theme.hpp"
 #include "ui/Widgets.hpp"
 
@@ -199,7 +202,11 @@ void drawRayTracing(UiContext& ctx) {
       ToggleRow("Auto exposure", &r.diskAutoExposure,
                 "With spin the inner disk gets much hotter and brighter (up to 32% of the rest mass is radiated "
                 "instead of 6%). This partially compensates so the image does not blow out; colors stay physical.");
-      ToggleRow("Disk beaming", &r.diskBeaming, "Brightness scales as g^4.");
+      ToggleRow("Visible spectrum", &r.diskVisibleSpectrum,
+                "On: what a camera sees. A black body seen with shift g is a black body at g \xC2\xB7 T, and "
+                "its visible light changes much less than its total power (most of it moves to UV or IR). "
+                "Off: classic look, brightness follows the bolometric T\xE2\x81\xB4 g\xE2\x81\xB4.");
+      ToggleRow("Disk beaming", &r.diskBeaming, "Brightness changes with the shift g (Doppler + gravity).");
       ToggleRow("Disk color shift", &r.diskColorShift, "Observed temperature = g \xC2\xB7 T.");
     }
     if (a.lensSource != Appearance::ThinDisk) {
@@ -344,7 +351,111 @@ void drawHiddenHint() {
   ImGui::End();
 }
 
+std::string formatDistance(double meters) {
+  char b[64];
+  if (meters >= 1e9) std::snprintf(b, sizeof(b), "%.1f million km", meters / 1e9);
+  else if (meters >= 1e4) std::snprintf(b, sizeof(b), "%.0f km", meters / 1e3);
+  else std::snprintf(b, sizeof(b), "%.0f m", meters);
+  return b;
+}
+
+std::string formatDuration(double seconds) {
+  char b[64];
+  const double year = 3.15576e7;
+  if (seconds < 1e-3) std::snprintf(b, sizeof(b), "%.0f \xC2\xB5s", seconds * 1e6);
+  else if (seconds < 1.0) std::snprintf(b, sizeof(b), "%.0f ms", seconds * 1e3);
+  else if (seconds < 120.0) std::snprintf(b, sizeof(b), "%.1f s", seconds);
+  else if (seconds < 7200.0) std::snprintf(b, sizeof(b), "%.1f min", seconds / 60.0);
+  else if (seconds < 172800.0) std::snprintf(b, sizeof(b), "%.1f h", seconds / 3600.0);
+  else if (seconds < year) std::snprintf(b, sizeof(b), "%.1f days", seconds / 86400.0);
+  else std::snprintf(b, sizeof(b), "%.3g years", seconds / year);
+  return b;
+}
+
+std::string formatAcceleration(double mps2) {
+  char b[64];
+  const double g = mps2 / 9.80665;
+  if (g >= 1e6) std::snprintf(b, sizeof(b), "%.1f million g", g / 1e6);
+  else if (g >= 10.0) std::snprintf(b, sizeof(b), "%.0f g", g);
+  else std::snprintf(b, sizeof(b), "%.2f g", g);
+  return b;
+}
+
 }  // namespace
+
+void drawJourneyHud(const JourneyFrame& f, double solarMasses, float exposureEv) {
+  const ThemeTokens& tk = tokens();
+  const float s = dpiScale();
+  const fall::Units units(solarMasses);
+  const double r = f.r;
+  const bool inside = r < 2.0;
+  const double energy = f.hovering ? fall::energyFromRest(r) : f.energy;
+  const double clock = f.hovering ? fall::overheadShiftStatic(r) : fall::overheadShiftFalling(r, energy);
+  char line[160];
+
+  ImGui::SetNextWindowPos(ImVec2(tk.panelMargin * 2.0f * s, ImGui::GetIO().DisplaySize.y - tk.panelMargin * 2.0f * s),
+                          ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+  ImGui::SetNextWindowBgAlpha(0.42f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * s, 12.0f * s));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f * s);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * s, 4.0f * s));
+  const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+  if (ImGui::Begin("##journey", nullptr, flags)) {
+    const float valueColumn = 118.0f * s;
+    auto row = [&](const char* label, const std::string& value) {
+      ImGui::PushStyleColor(ImGuiCol_Text, tk.textMuted);
+      ImGui::TextUnformatted(label);
+      ImGui::PopStyleColor();
+      ImGui::SameLine(valueColumn);
+      ImGui::TextUnformatted(value.c_str());
+    };
+    ImGui::PushFont(fonts().semibold);
+    std::snprintf(line, sizeof(line), "r = %.3f M", r);
+    ImGui::TextUnformatted(line);
+    ImGui::PopFont();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Text, tk.textMuted);
+    ImGui::TextUnformatted(("  " + formatDistance(r * units.length) + " from the center").c_str());
+    ImGui::PopStyleColor();
+
+    if (inside) row("horizon", "crossed, " + formatDistance((2.0 - r) * units.length) + " inside");
+    else row("horizon", formatDistance((r - 2.0) * units.length) + " below");
+    if (f.hovering) {
+      row("engines", "hovering at " + formatAcceleration(fall::hoverAcceleration(r) * units.accel));
+    } else if (!inside) {
+      std::snprintf(line, sizeof(line), "off, falling at %.3f c", fall::localSpeed(r, energy));
+      row("engines", line);
+    } else {
+      row("engines", "off: inside, every path leads to r = 0");
+    }
+    std::snprintf(line, sizeof(line), "\xC3\x97%.2f  (light from overhead, %s)", clock,
+                  clock >= 1.0 ? "blueshifted" : "redshifted");
+    row("outside clocks", line);
+    row("outside time", "+" + formatDuration(f.outsideTime * units.time) + " since the start");
+    row("on board", "+" + formatDuration(f.properTime * units.time));
+    std::snprintf(line, sizeof(line), "%.3g m/s\xC2\xB2 per meter", fall::tidalStretch(r) * units.accel / units.length);
+    row("tidal stretch", line);
+    const double left = fall::properTimeToSingularity(r, energy) * units.time;
+    row("singularity", f.hovering ? formatDuration(left) + " away if the engines stop" : "in " + formatDuration(left));
+
+    if (!std::isnan(exposureEv)) {
+      std::snprintf(line, sizeof(line), "%+.1f EV (auto, like a video camera)", exposureEv);
+      row("exposure", line);
+    }
+
+    ImGui::PushFont(fonts().caption);
+    ImGui::PushStyleColor(ImGuiCol_Text, tk.textFaint);
+    if (solarMasses >= 1e6) std::snprintf(line, sizeof(line), "Schwarzschild hole of %.3g million suns", solarMasses / 1e6);
+    else std::snprintf(line, sizeof(line), "Schwarzschild hole of %.0f suns", solarMasses);
+    ImGui::TextUnformatted(line);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(3);
+}
 
 UiActions drawUi(UiContext& ctx) {
   UiActions out;

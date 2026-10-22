@@ -34,6 +34,8 @@ void printUsage() {
       "  --spin A            black hole spin a/M for the ray tracer (-0.998 .. 0.998)\n"
       "  --ray-step S        ray-tracing step as a fraction of r (smaller = sharper, slower)\n"
       "  --lens-source S     what the ray tracer lenses: disk, particles or both\n"
+      "  --classic-disk      disk brightness as bolometric T^4 g^4 (the old look) instead of the\n"
+      "                      exact visible light of a black body\n"
       "\n"
       "Video recording (renders off-screen, resumable, then exits):\n"
       "  --record DIR        write frame_00000.jpg ... and make_video.bat into DIR\n"
@@ -45,8 +47,15 @@ void printUsage() {
       "  --ssaa N            supersampling factor 1-4 (overrides the preset)\n"
       "  --samples N         jittered sub-frames per frame: anti-aliasing + motion blur\n"
       "  --shutter S         motion blur, fraction of the frame interval (0 = none, 0.5 = film look)\n"
-      "  --path NAME         camera path: flyby (default), orbit, dive, infall (first-person fall\n"
-      "                      through the horizon; --view Y,P,D sets direction, inclination, start)\n"
+      "  --path NAME         camera path: flyby (default), orbit, dive, or a first-person journey\n"
+      "                      (--view Y,P,D sets its direction, inclination and start radius):\n"
+      "                        infall  free fall from far away through the horizon\n"
+      "                        hover   descend on engines to 2.01 M looking up (the sky shrinks into\n"
+      "                                a bright circle, outside clocks run 14x faster), then fall\n"
+      "  --hud               physical readout on journey frames (distance, clocks, tides, ...)\n"
+      "  --auto-exposure B   on/off: meter the highlights like a video camera (default: on for\n"
+      "                      journeys, whose sky gets 100x brighter near the horizon)\n"
+      "  --mass M            hole mass in suns for the readout (default 4.3e6, Sagittarius A*)\n"
       "  --format F          jpg (default) or png\n");
 }
 
@@ -88,6 +97,8 @@ int main(int argc, char** argv) {
     } else if (!std::strcmp(a, "--lens-source")) {
       const std::string s = next();
       opt.lensSource = s == "particles" ? 1 : s == "both" ? 2 : 0;
+    } else if (!std::strcmp(a, "--classic-disk")) {
+      opt.classicDisk = true;
     } else if (!std::strcmp(a, "--ray-step")) {
       opt.rayStep = static_cast<float>(std::atof(next()));
     } else if (!std::strcmp(a, "--record")) {
@@ -108,6 +119,13 @@ int main(int argc, char** argv) {
       opt.shutter = static_cast<float>(std::atof(next()));
     } else if (!std::strcmp(a, "--path")) {
       opt.cameraPath = next();
+    } else if (!std::strcmp(a, "--auto-exposure")) {
+      const std::string v = next();
+      opt.autoExposure = v == "on" || v == "1" ? 1 : 0;
+    } else if (!std::strcmp(a, "--hud")) {
+      opt.hud = true;
+    } else if (!std::strcmp(a, "--mass")) {
+      opt.solarMasses = std::max(1.0, std::atof(next()));
     } else if (!std::strcmp(a, "--format")) {
       opt.frameFormat = next();
     } else if (!std::strcmp(a, "--backend")) {

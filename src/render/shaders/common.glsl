@@ -52,6 +52,29 @@ vec3 blackbody(float kelvin) {
     return pow(c, vec3(2.2));
 }
 
+const vec3 kLuma = vec3(0.2126, 0.7152, 0.0722);  // linear sRGB luminance
+
+// Exact black-body colors (src/core/Spectrum.hpp): the table holds ln(linear
+// sRGB) at log10 T evenly spaced over [2, 6], luminance 1 at 6500 K. Only
+// programs that bind the table (Renderer: unit 2) may call this.
+uniform sampler1D uSpectrum;
+vec3 planckRgb(float kelvin) {
+    float u = clamp((log(kelvin) * 0.4342944819 - 2.0) * 0.25, 0.0, 1.0);
+    return exp(textureLod(uSpectrum, (u * 1023.0 + 0.5) / 1024.0, 0.0).rgb);
+}
+
+// Light of black-body temperature T seen with frequency ratio g: again a black
+// body, at g T, with the same dilution (I_ν/ν³ is invariant). `c` keeps its
+// exact value at g = 1; a non-black-body remainder is scaled like the luminance.
+vec3 shiftBlackbody(vec3 c, float kelvin, float g) {
+    if (abs(g - 1.0) < 1e-3) return c;
+    vec3 emitted = planckRgb(kelvin), observed = planckRgb(kelvin * g);
+    float lumEmitted = max(dot(emitted, kLuma), 1e-30);
+    float dilution = dot(c, kLuma) / lumEmitted;
+    float ratio = dot(observed, kLuma) / lumEmitted;
+    return max(dilution * observed + (c - dilution * emitted) * ratio, vec3(0.0));
+}
+
 // Polynomial fits of the matplotlib maps (Matt Zucker, CC0) and of Turbo (Google, Apache 2.0).
 vec3 polyMap(float t, vec3 c0, vec3 c1, vec3 c2, vec3 c3, vec3 c4, vec3 c5, vec3 c6) {
     return c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6)))));
