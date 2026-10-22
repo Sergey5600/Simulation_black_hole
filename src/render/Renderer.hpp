@@ -62,6 +62,7 @@ struct FrameInput {
   int height = 1;
   float dpiScale = 1.0f;
   float time = 0.0f;              // simulation time (animates the ray-traced disk)
+  bool rainFrame = false;         // camera in radial free fall from infinity (lensing only)
 };
 
 // HDR point renderer: stars -> horizon -> guides -> additive particle splats

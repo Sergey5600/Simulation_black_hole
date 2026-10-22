@@ -7,6 +7,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -288,13 +290,39 @@ bool qualityPreset(const std::string& name, QualityPreset& q) {
 
 }  // namespace
 
+// First-person fall into the hole: radial free fall from rest at infinity
+// (rain frame), along a line `base.pitch` above the disk plane. The distance
+// shrinks exponentially from base.distance to 0.5 M (slow motion near the
+// horizon), and the gaze turns from the hole towards the side as it closes in,
+// so the shadow does not simply swallow the whole frame.
+void App::setInfallCamera(FrameInput& in, const ViewPreset& base, float u) {
+  const float r0 = std::max(base.distance, 4.0f), r1 = 0.5f;
+  const float r = r0 * std::pow(r1 / r0, u);
+  const float cp = std::cos(base.pitch);
+  const glm::vec3 fall(cp * std::sin(base.yaw), std::sin(base.pitch), cp * std::cos(base.yaw));
+  const glm::vec3 pos = fall * r;
+  const glm::vec3 up(0.0f, 1.0f, 0.0f);
+  const glm::vec3 side = glm::normalize(glm::cross(up, fall));
+  const float s = std::clamp((14.0f - r) / (14.0f - 1.5f), 0.0f, 1.0f);
+  const float turn = 1.15f * s * s * (3.0f - 2.0f * s);  // smoothstep, radians
+  const glm::vec3 forward = glm::normalize(-fall * std::cos(turn) + side * std::sin(turn));
+  const float fov = glm::radians(75.0f);
+  const float aspect = static_cast<float>(in.width) / static_cast<float>(in.height);
+  in.view = glm::lookAt(pos, pos + forward, up);
+  in.projection = glm::perspective(fov, aspect, 0.01f, 5000.0f);  // sub-pixel jitter is added afterwards
+  in.cameraPos = pos;
+  in.fovYRadians = fov;
+  in.rainFrame = true;
+}
+
 int App::record() {
   CameraPath path;
   ViewPreset base = sim_->current().defaults().view;
   if (!std::isnan(options_.yaw)) base.yaw = options_.yaw;
   if (!std::isnan(options_.pitch)) base.pitch = options_.pitch;
   if (!std::isnan(options_.distance)) base.distance = options_.distance;
-  if (!CameraPath::named(options_.cameraPath, base, path)) {
+  const bool infall = options_.cameraPath == "infall";
+  if (!infall && !CameraPath::named(options_.cameraPath, base, path)) {
     std::fprintf(stderr, "Unknown camera path '%s' (available: %s)\n", options_.cameraPath.c_str(), CameraPath::names());
     return 2;
   }
@@ -316,6 +344,12 @@ int App::record() {
 
   RenderSettings settings = render_;
   settings.rayTileSize = 256;
+  if (infall) {
+    if (!settings.lensing) std::printf("infall: turning gravitational lensing on\n");
+    if (settings.spin != 0.0f) std::printf("infall: the falling camera uses a non-spinning hole (spin set to 0)\n");
+    settings.lensing = true;
+    settings.spin = 0.0f;
+  }
   if (options_.rayStep <= 0.0f) {
     settings.rayStepScale = q.rayStep;
     settings.rayMaxSteps = q.raySteps;
@@ -354,9 +388,10 @@ int App::record() {
       // Sub-frame time inside the shutter, in frames (centered on the frame).
       const float offset = samples > 1 ? ((static_cast<float>(k) + 0.5f) / static_cast<float>(samples) - 0.5f) * shutter : 0.0f;
       const float u = frames > 1 ? (static_cast<float>(f) + offset) / static_cast<float>(frames - 1) : 0.0f;
-      camera_.setView(path.evaluate(std::clamp(u, 0.0f, 1.0f)), true);
+      if (!infall) camera_.setView(path.evaluate(std::clamp(u, 0.0f, 1.0f)), true);
 
       FrameInput in = makeFrameInput(bigW, bigH);
+      if (infall) setInfallCamera(in, base, std::clamp(u, 0.0f, 1.0f));
       in.dpiScale = dpiScale_ * static_cast<float>(ssaa);
       in.time += offset * simDt;
       if (samples > 1) {  // sub-pixel jitter: shift the projection by a fraction of a pixel

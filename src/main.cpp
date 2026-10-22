@@ -45,7 +45,8 @@ void printUsage() {
       "  --ssaa N            supersampling factor 1-4 (overrides the preset)\n"
       "  --samples N         jittered sub-frames per frame: anti-aliasing + motion blur\n"
       "  --shutter S         motion blur, fraction of the frame interval (0 = none, 0.5 = film look)\n"
-      "  --path NAME         camera path: flyby (default), orbit, dive\n"
+      "  --path NAME         camera path: flyby (default), orbit, dive, infall (first-person fall\n"
+      "                      through the horizon; --view Y,P,D sets direction, inclination, start)\n"
       "  --format F          jpg (default) or png\n");
 }
 

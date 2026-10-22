@@ -453,6 +453,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uSky", 0);
   backgroundProgram_.set("uSkyBrightness", settings.stars ? settings.skyBrightness : 0.0f);
   backgroundProgram_.set("uLensing", settings.lensing);
+  backgroundProgram_.set("uRainFrame", in.rainFrame);
   backgroundProgram_.set("uDisk", lensSource != Appearance::Particles);
   backgroundProgram_.set("uVolumeOn", volumeOn);
   // The 3D sampler must never share unit 0 with the cube map, even when unused:

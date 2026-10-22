@@ -40,4 +40,13 @@ peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
 print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --quality max':<28} peak {peak:3d}")
 sys.exit(0 if peak > 60 else 1)
 PY
+# First-person infall (rain frame), last frame is inside the horizon.
+eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --record $OUT/fall --path infall --view 0.6,0.22,40 --record-size 240x136 --duration 0.5 --fps 8 --quality draft" > "$OUT/fall.log" 2>&1
+python3 -I - "$OUT/fall/frame_00003.jpg" <<'PY'
+import sys
+from PIL import Image
+peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
+print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path infall':<28} peak {peak:3d}")
+sys.exit(0 if peak > 60 else 1)
+PY
 echo "all smoke renders passed ($OUT)"

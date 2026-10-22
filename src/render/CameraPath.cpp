@@ -17,7 +17,7 @@ float smootherstep(float x) { return x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f
 
 }  // namespace
 
-const char* CameraPath::names() { return "flyby, orbit, dive"; }
+const char* CameraPath::names() { return "flyby, orbit, dive, infall"; }
 
 bool CameraPath::named(const std::string& name, const ViewPreset& base, CameraPath& out) {
   out.keys_.clear();

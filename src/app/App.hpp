@@ -66,6 +66,7 @@ class App {
   void uploadPoints();
   FrameInput makeFrameInput(int width, int height);
   int record();
+  void setInfallCamera(FrameInput& in, const ViewPreset& base, float u);
   void takeScreenshot(const std::string& path, int width, int height);
 
   Appearance& appearance() { return appearances_[sim_->currentIndex()]; }

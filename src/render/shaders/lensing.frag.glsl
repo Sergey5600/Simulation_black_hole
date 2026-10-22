@@ -38,6 +38,22 @@ uniform float uSpin;           // a/M, along +y (the disk's rotation axis)
 uniform float uHorizon;        // r+ = 1 + sqrt(1 - a²)
 uniform float uIsco;           // sets the temperature profile
 
+// Camera frame. false: a static observer at uCameraPos. true: an observer in
+// radial free fall from rest at infinity (the Painleve-Gullstrand "rain" frame),
+// which works inside the horizon too.
+uniform bool uRainFrame;
+
+// Frequency ratio ν_camera / E for the current pixel's photon (set in main()).
+float gCamera = 1.0;
+
+// Light from the sky or the particles as seen by a moving or deep camera:
+// treated as ~6500 K black-body light, re-colored to 6500·g K, brightness ∝ g⁴.
+vec3 frequencyShift(vec3 c, float g) {
+    if (abs(g - 1.0) < 1e-3) return c;
+    vec3 tint = blackbody(6500.0 * g) / max(blackbody(6500.0), vec3(1e-4));
+    return c * tint * min(g * g * g * g, 64.0);
+}
+
 vec3 sky(vec3 dir) { return textureLod(uSky, dir, 0.0).rgb * uSkyBrightness; }
 
 // Light emitted by the particle volume along the (short, straight) chord a -> b
@@ -75,7 +91,7 @@ vec3 diskShade(float r, float phi, float omega, float g) {
     return blackbody(tObserved * uPeakTemperature) * intensity;
 }
 
-float cameraFactor() { return 1.0 / sqrt(max(1.0 - 2.0 / length(uCameraPos), 1e-4)); }
+float cameraFactor() { return gCamera; }
 
 // Schwarzschild: light reaching the camera from the disk point p; vRay is the
 // backward ray's direction there, so the physical photon moves along -vRay.
@@ -195,23 +211,55 @@ void main() {
         fragColor = vec4(sky(dir), 1.0);
         return;
     }
-    if (abs(uSpin) > 1e-4) {
+    if (abs(uSpin) > 1e-4 && !uRainFrame) {
+        gCamera = 1.0 / sqrt(max(1.0 - 2.0 / length(uCameraPos), 1e-4));  // static camera
         fragColor = vec4(traceKerr(dir), 1.0);
         return;
     }
 
+    // From the camera's local frame to the starting direction of the ray's
+    // spatial path (pseudo-Cartesian Schwarzschild), plus the camera's frequency
+    // factor. With d_r the radial (outward) part of the pixel direction:
+    //   static observer: path ∝ r̂ sqrt(1-2M/r) d_r + d_⊥,  g = 1/sqrt(1-2M/r)
+    //   rain observer:   path ∝ r̂ (d_r + β) + d_⊥,         g = 1/(1 + β d_r), β = sqrt(2M/r)
     vec3 x = uCameraPos;
-    vec3 v = dir;
+    float rCam = length(x);
+    vec3 n = x / rCam;
+    float dr = dot(dir, n);
+    vec3 dPerp = dir - n * dr;
+    vec3 v;
+    if (uRainFrame) {
+        float beta = sqrt(2.0 / rCam);
+        float denominator = 1.0 + beta * dr;  // = E / ν_camera
+        // Inside the horizon (β > 1), looking towards the center: such photons
+        // would carry negative energy E; they could only come from a white hole,
+        // which real black holes do not have. That cone is the shadow ahead.
+        if (denominator <= 0.02) {
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+        v = normalize(n * (dr + beta) + dPerp);
+        gCamera = min(1.0 / denominator, 20.0);
+    } else {
+        float f = max(1.0 - 2.0 / rCam, 1e-4);
+        v = normalize(n * (sqrt(f) * dr) + dPerp);
+        gCamera = 1.0 / sqrt(f);
+    }
+
     vec3 Lv = cross(x, v);
     float h2 = dot(Lv, Lv);
-    float escapeRadius = max(length(uCameraPos), max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
+    float escapeRadius = max(rCam, max(uDiskRadii.y, uVolumeOn ? 0.87 * uVolumeSize : 0.0)) + 20.0;
 
     vec3 color = vec3(0.0);
+    vec3 particles = vec3(0.0);
     for (int i = 0; i < uMaxSteps; ++i) {
         float r = length(x);
-        if (r < 2.0005) break;  // captured: shadow
+        // Captured: inside the horizon and still heading inwards (backwards in time).
+        // A camera inside the horizon traces outwards first, so it is not cut off.
+        if (r < 2.0005 && dot(x, v) < 0.0) break;
+        if (r < 0.05) break;
         if (r > escapeRadius && dot(x, v) > 0.0) {
-            color += sky(normalize(v));
+            color += frequencyShift(sky(normalize(v)), gCamera);
             break;
         }
 
@@ -224,7 +272,7 @@ void main() {
         vec3 k4x = v0 + h * k3v, k4v = accel(x0 + h * k3x, h2);
         x = x0 + (h / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
         v = v0 + (h / 6.0) * (k1v + 2.0 * k2v + 2.0 * k3v + k4v);
-        color += volumeLight(x0, x);
+        particles += volumeLight(x0, x);
 
         // Opaque thin disk in the equatorial plane y = 0.
         if (uDisk && x0.y * x.y < 0.0) {
@@ -237,5 +285,5 @@ void main() {
             }
         }
     }
-    fragColor = vec4(color, 1.0);
+    fragColor = vec4(color + frequencyShift(particles, gCamera), 1.0);
 }
