@@ -87,6 +87,11 @@ class Renderer {
   // Renders into `targetFbo` (0 = the window) of size in.width x in.height.
   void render(const FrameInput& in, const RenderSettings& settings, GLuint targetFbo = 0);
 
+  // Offline helpers for video recording: adds `weight` x src into `dst`
+  // (RGBA32F), and box-filters `src` down by `factor` into `dst`.
+  void accumulate(GLuint srcTexture, const gl::RenderTarget& dst, float weight);
+  void downsample(GLuint srcTexture, int factor, const gl::RenderTarget& dst);
+
   // 256x1 sRGB strips used as legends in the UI (ImTextureID-compatible).
   GLuint colormapTexture(Colormap c) const { return colormapStrips_[static_cast<size_t>(c)]; }
 
@@ -103,6 +108,7 @@ class Renderer {
   gl::Program pointsProgram_, starsProgram_, horizonProgram_, linesProgram_;
   gl::Program bloomDownProgram_, bloomUpProgram_, compositeProgram_, stripProgram_;
   gl::Program skyGenProgram_, backgroundProgram_, splatProgram_, volumeResolveProgram_;
+  gl::Program accumulateProgram_, downsampleProgram_;
   std::array<GLuint, 3> volumeSums_{};  // R32UI fixed-point light sums (r, g, b)
   GLuint volumeEmission_ = 0;          // RGBA16F emissivity, trilinear-filtered
   int volumeRes_ = 0;

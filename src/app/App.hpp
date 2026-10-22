@@ -38,9 +38,12 @@ struct AppOptions {
   int recordHeight = 2160;
   float recordSeconds = 60.0f;
   int recordFps = 60;
-  int ssaa = 2;                    // supersampling: render at ssaa x the size, box-filter down
+  std::string quality = "film";    // preset: draft, film, max (explicit options below override it)
+  int ssaa = 0;                    // supersampling: render at ssaa x the size, box-filter down (0 = preset)
+  int samples = 0;                 // jittered sub-frames per frame (anti-aliasing + motion blur; 0 = preset)
+  float shutter = -1.0f;           // motion blur: fraction of the frame interval (< 0 = preset)
   std::string cameraPath = "flyby";
-  std::string frameFormat = "jpg";
+  std::string frameFormat;         // jpg or png (empty = preset)
 };
 
 class App {

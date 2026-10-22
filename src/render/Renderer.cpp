@@ -39,6 +39,8 @@ bool Renderer::init() {
   ok &= backgroundProgram_.build("lensing", {fullscreen_vert}, {common, lensing_frag});
   ok &= splatProgram_.buildCompute("splat", {common, particle_shading, splat_comp});
   ok &= volumeResolveProgram_.buildCompute("volume_resolve", {volume_resolve_comp});
+  ok &= accumulateProgram_.build("accumulate", {fullscreen_vert}, {accumulate_frag});
+  ok &= downsampleProgram_.build("downsample", {fullscreen_vert}, {downsample_frag});
   if (!ok) return false;
 
   glGenVertexArrays(1, &emptyVao_);
@@ -336,6 +338,36 @@ bool Renderer::splatParticles(const FrameInput& in, const RenderSettings& settin
   return true;
 }
 
+void Renderer::accumulate(GLuint srcTexture, const gl::RenderTarget& dst, float weight) {
+  glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
+  glViewport(0, 0, dst.width, dst.height);
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE);
+  accumulateProgram_.use();
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, srcTexture);
+  accumulateProgram_.set("uSource", 0);
+  accumulateProgram_.set("uWeight", weight);
+  glBindVertexArray(emptyVao_);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glDisable(GL_BLEND);
+}
+
+void Renderer::downsample(GLuint srcTexture, int factor, const gl::RenderTarget& dst) {
+  glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
+  glViewport(0, 0, dst.width, dst.height);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_BLEND);
+  downsampleProgram_.use();
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, srcTexture);
+  downsampleProgram_.set("uSource", 0);
+  downsampleProgram_.set("uFactor", factor);
+  glBindVertexArray(emptyVao_);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
 void Renderer::ensureTargets(int width, int height) {
   if (hdr_.width == width && hdr_.height == height) return;
   hdr_.create(width, height, GL_RGBA16F, true);
@@ -423,12 +455,14 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uLensing", settings.lensing);
   backgroundProgram_.set("uDisk", lensSource != Appearance::Particles);
   backgroundProgram_.set("uVolumeOn", volumeOn);
+  // The 3D sampler must never share unit 0 with the cube map, even when unused:
+  // two sampler types on one unit make the whole draw call fail.
+  backgroundProgram_.set("uVolume", 1);
   if (volumeOn) {
     const float extent = std::max(in.appearance.volumeExtent, 1.0f);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_3D, volumeEmission_);
     glActiveTexture(GL_TEXTURE0);
-    backgroundProgram_.set("uVolume", 1);
     backgroundProgram_.set("uVolumeMin", glm::vec3(-0.5f * extent));
     backgroundProgram_.set("uVolumeSize", extent);
     backgroundProgram_.set("uVoxel", extent / static_cast<float>(volumeRes_));

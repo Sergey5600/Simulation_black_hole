@@ -40,7 +40,11 @@ void printUsage() {
       "  --record-size WxH   output resolution (default 3840x2160)\n"
       "  --duration S        seconds of video (default 60)\n"
       "  --fps N             frames per second (default 60)\n"
-      "  --ssaa N            supersampling factor 1-4 (default 2)\n"
+      "  --quality Q         preset: draft, film (default), max (9 jittered sub-frames with motion blur,\n"
+      "                      2x finer ray steps; costs about as much as --ssaa 3)\n"
+      "  --ssaa N            supersampling factor 1-4 (overrides the preset)\n"
+      "  --samples N         jittered sub-frames per frame: anti-aliasing + motion blur\n"
+      "  --shutter S         motion blur, fraction of the frame interval (0 = none, 0.5 = film look)\n"
       "  --path NAME         camera path: flyby (default), orbit, dive\n"
       "  --format F          jpg (default) or png\n");
 }
@@ -95,6 +99,12 @@ int main(int argc, char** argv) {
       opt.recordFps = std::max(1, std::atoi(next()));
     } else if (!std::strcmp(a, "--ssaa")) {
       opt.ssaa = std::atoi(next());
+    } else if (!std::strcmp(a, "--quality")) {
+      opt.quality = next();
+    } else if (!std::strcmp(a, "--samples")) {
+      opt.samples = std::atoi(next());
+    } else if (!std::strcmp(a, "--shutter")) {
+      opt.shutter = static_cast<float>(std::atof(next()));
     } else if (!std::strcmp(a, "--path")) {
       opt.cameraPath = next();
     } else if (!std::strcmp(a, "--format")) {

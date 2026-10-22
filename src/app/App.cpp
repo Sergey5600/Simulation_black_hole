@@ -254,10 +254,40 @@ FrameInput App::makeFrameInput(int width, int height) {
   return in;
 }
 
-// Offline video: every frame is rendered off-screen at (size x ssaa), box-filtered
-// down and written as frame_NNNNN.jpg. Existing frames are skipped, so an
-// interrupted recording resumes where it stopped (the simulation still runs
-// through them to stay in sync).
+// Offline video. Each output frame averages `samples` sub-frames, each shifted
+// by a sub-pixel jitter (Halton 2,3) and spread over the shutter interval, which
+// gives anti-aliasing and motion blur at once; every sub-frame is rendered at
+// ssaa x the output size. Frames are box-filtered down on the GPU and written as
+// frame_NNNNN.jpg/png. Existing frames are skipped, so an interrupted recording
+// resumes where it stopped (the simulation still runs through them to stay in sync).
+namespace {
+
+float halton(int index, int base) {
+  float f = 1.0f, r = 0.0f;
+  for (int i = index; i > 0; i /= base) {
+    f /= static_cast<float>(base);
+    r += f * static_cast<float>(i % base);
+  }
+  return r;
+}
+
+struct QualityPreset {
+  int ssaa, samples;
+  float shutter, rayStep;
+  int raySteps;
+  const char* format;
+};
+
+bool qualityPreset(const std::string& name, QualityPreset& q) {
+  if (name == "draft") q = {1, 1, 0.0f, 0.03f, 1500, "jpg"};
+  else if (name == "film") q = {2, 1, 0.0f, 0.012f, 4000, "jpg"};
+  else if (name == "max") q = {1, 9, 0.5f, 0.006f, 8000, "jpg"};
+  else return false;
+  return true;
+}
+
+}  // namespace
+
 int App::record() {
   CameraPath path;
   ViewPreset base = sim_->current().defaults().view;
@@ -268,8 +298,17 @@ int App::record() {
     std::fprintf(stderr, "Unknown camera path '%s' (available: %s)\n", options_.cameraPath.c_str(), CameraPath::names());
     return 2;
   }
+  QualityPreset q{};
+  if (!qualityPreset(options_.quality, q)) {
+    std::fprintf(stderr, "Unknown quality '%s' (draft, film, max)\n", options_.quality.c_str());
+    return 2;
+  }
+  // Explicit options override the preset.
+  const int ssaa = std::clamp(options_.ssaa > 0 ? options_.ssaa : q.ssaa, 1, 4);
+  const int samples = std::clamp(options_.samples > 0 ? options_.samples : q.samples, 1, 64);
+  const float shutter = std::clamp(options_.shutter >= 0.0f ? options_.shutter : q.shutter, 0.0f, 1.0f);
+  const std::string format = options_.frameFormat.empty() ? q.format : options_.frameFormat;
 
-  const int ssaa = std::clamp(options_.ssaa, 1, 4);
   const int outW = options_.recordWidth, outH = options_.recordHeight;
   const int bigW = outW * ssaa, bigH = outH * ssaa;
   const int frames = std::max(1, static_cast<int>(std::lround(options_.recordSeconds * static_cast<float>(options_.recordFps))));
@@ -277,19 +316,22 @@ int App::record() {
 
   RenderSettings settings = render_;
   settings.rayTileSize = 256;
-  if (settings.lensing && options_.rayStep <= 0.0f) {
-    settings.rayStepScale = 0.012f;  // film quality: ~3x finer than interactive
-    settings.rayMaxSteps = 4000;
+  if (options_.rayStep <= 0.0f) {
+    settings.rayStepScale = q.rayStep;
+    settings.rayMaxSteps = q.raySteps;
   }
 
-  gl::RenderTarget target;
+  gl::RenderTarget target, accum, out;
   target.create(bigW, bigH, GL_RGBA8, false);
-  std::vector<unsigned char> big(static_cast<size_t>(bigW) * bigH * 3);
-  std::vector<unsigned char> small(static_cast<size_t>(outW) * outH * 3);
+  if (samples > 1) accum.create(bigW, bigH, GL_RGBA32F, false);
+  out.create(outW, outH, GL_RGBA8, false);
+  std::vector<unsigned char> pixels(static_cast<size_t>(outW) * outH * 3);
   std::filesystem::create_directories(options_.recordDir);
   glfwSwapInterval(0);
 
-  std::printf("Recording %d frames (%dx%d, %dx supersampling, path '%s') to %s\n", frames, outW, outH, ssaa,
+  std::printf("Recording %d frames: %dx%d, quality '%s' (%dx supersampling, %d samples, shutter %.2f, ray step %.4f), "
+              "path '%s' -> %s\n",
+              frames, outW, outH, options_.quality.c_str(), ssaa, samples, shutter, settings.rayStepScale,
               options_.cameraPath.c_str(), options_.recordDir.c_str());
   const double start = glfwGetTime();
   int rendered = 0;
@@ -298,33 +340,38 @@ int App::record() {
     if (f > 0) sim_->advance(simDt);
 
     char name[64];
-    std::snprintf(name, sizeof(name), "frame_%05d.%s", f, options_.frameFormat.c_str());
+    std::snprintf(name, sizeof(name), "frame_%05d.%s", f, format.c_str());
     const std::string file = (std::filesystem::path(options_.recordDir) / name).string();
     if (std::filesystem::exists(file)) continue;  // resume
 
-    camera_.setView(path.evaluate(frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f), true);
     uploadPoints();
-    FrameInput in = makeFrameInput(bigW, bigH);
-    in.dpiScale = dpiScale_ * static_cast<float>(ssaa);
-    renderer_.render(in, settings, target.fbo);
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, target.fbo);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, bigW, bigH, GL_RGB, GL_UNSIGNED_BYTE, big.data());
-    const int area = ssaa * ssaa;
-    for (int y = 0; y < outH; ++y) {
-      for (int x = 0; x < outW; ++x) {
-        for (int c = 0; c < 3; ++c) {
-          int sum = 0;
-          for (int sy = 0; sy < ssaa; ++sy) {
-            const unsigned char* row = &big[(static_cast<size_t>(y * ssaa + sy) * bigW + static_cast<size_t>(x * ssaa)) * 3];
-            for (int sx = 0; sx < ssaa; ++sx) sum += row[sx * 3 + c];
-          }
-          small[(static_cast<size_t>(y) * outW + x) * 3 + c] = static_cast<unsigned char>((sum + area / 2) / area);
-        }
-      }
+    if (samples > 1) {
+      glBindFramebuffer(GL_FRAMEBUFFER, accum.fbo);
+      glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
     }
-    if (!writeImage(file, outW, outH, small.data())) {
+    for (int k = 0; k < samples; ++k) {
+      // Sub-frame time inside the shutter, in frames (centered on the frame).
+      const float offset = samples > 1 ? ((static_cast<float>(k) + 0.5f) / static_cast<float>(samples) - 0.5f) * shutter : 0.0f;
+      const float u = frames > 1 ? (static_cast<float>(f) + offset) / static_cast<float>(frames - 1) : 0.0f;
+      camera_.setView(path.evaluate(std::clamp(u, 0.0f, 1.0f)), true);
+
+      FrameInput in = makeFrameInput(bigW, bigH);
+      in.dpiScale = dpiScale_ * static_cast<float>(ssaa);
+      in.time += offset * simDt;
+      if (samples > 1) {  // sub-pixel jitter: shift the projection by a fraction of a pixel
+        in.projection[2][0] += (halton(k + 1, 2) - 0.5f) * 2.0f / static_cast<float>(bigW);
+        in.projection[2][1] += (halton(k + 1, 3) - 0.5f) * 2.0f / static_cast<float>(bigH);
+      }
+      renderer_.render(in, settings, target.fbo);
+      if (samples > 1) renderer_.accumulate(target.color, accum, 1.0f / static_cast<float>(samples));
+    }
+    renderer_.downsample(samples > 1 ? accum.color : target.color, ssaa, out);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, out.fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, outW, outH, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+    if (!writeImage(file, outW, outH, pixels.data())) {
       std::fprintf(stderr, "Failed to write %s (disk full?)\n", file.c_str());
       return 1;
     }
@@ -337,10 +384,10 @@ int App::record() {
       glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
       glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
       glClear(GL_COLOR_BUFFER_BIT);
-      const float scale = std::min(static_cast<float>(fbW) / bigW, static_cast<float>(fbH) / bigH);
-      const int w = static_cast<int>(bigW * scale), h = static_cast<int>(bigH * scale);
+      const float scale = std::min(static_cast<float>(fbW) / outW, static_cast<float>(fbH) / outH);
+      const int w = static_cast<int>(outW * scale), h = static_cast<int>(outH * scale);
       const int x0 = (fbW - w) / 2, y0 = (fbH - h) / 2;
-      glBlitFramebuffer(0, 0, bigW, bigH, x0, y0, x0 + w, y0 + h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+      glBlitFramebuffer(0, 0, outW, outH, x0, y0, x0 + w, y0 + h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
       glfwSwapBuffers(window_);
     }
 
@@ -354,15 +401,21 @@ int App::record() {
     if (rendered == 1 || f % 50 == 0) std::printf("%s\n", title + 15);
   }
   target.destroy();
+  accum.destroy();
+  out.destroy();
 
-  // ffmpeg helper next to the frames.
-  const std::string cmd = "ffmpeg -y -framerate " + std::to_string(options_.recordFps) + " -i frame_%05d." +
-                          options_.frameFormat + " -c:v libx264 -preset slow -crf 16 -pix_fmt yuv420p blackhole.mp4";
+  // ffmpeg helper next to the frames: H.264 plays everywhere; the HEVC 10-bit
+  // line gives smaller files and smoother dark gradients.
+  const std::string input = " -framerate " + std::to_string(options_.recordFps) + " -i frame_%05d." + format;
+  const std::string h264 = "ffmpeg -y" + input + " -c:v libx264 -preset slow -crf 14 -pix_fmt yuv420p blackhole.mp4";
+  const std::string hevc =
+      "ffmpeg -y" + input + " -c:v libx265 -preset slow -crf 16 -pix_fmt yuv420p10le -tag:v hvc1 blackhole_hevc.mp4";
   {
     std::ofstream bat(std::filesystem::path(options_.recordDir) / "make_video.bat");
-    bat << "@echo off\r\ncd /d \"%~dp0\"\r\n" << cmd << "\r\npause\r\n";
+    bat << "@echo off\r\ncd /d \"%~dp0\"\r\n" << h264 << "\r\nrem Higher quality, smaller file (HEVC 10-bit):\r\nrem " << hevc
+        << "\r\npause\r\n";
     std::ofstream sh(std::filesystem::path(options_.recordDir) / "make_video.sh");
-    sh << "#!/bin/sh\ncd \"$(dirname \"$0\")\"\n" << cmd << "\n";
+    sh << "#!/bin/sh\ncd \"$(dirname \"$0\")\"\n" << h264 << "\n# HEVC 10-bit:\n# " << hevc << "\n";
   }
   std::printf("Done: %d new frames in %.1f min. Make the video with make_video.bat in %s\n", rendered,
               (glfwGetTime() - start) / 60.0, options_.recordDir.c_str());
