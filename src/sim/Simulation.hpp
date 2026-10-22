@@ -14,6 +14,7 @@ struct SimControls {
   float timeScale = 30.0f;  // simulated M/c per real second
   TimeMode timeMode = TimeMode::Coordinate;
   float accuracy = 0.02f;   // RK4 step as a fraction of the local dynamical time
+  float spin = 0.0f;        // a/M of the hole (Kerr when != 0); takes effect on reset()
 };
 
 // Glue between scenarios and the compute backend. Owns the simulation clock.
@@ -42,6 +43,8 @@ class Simulation {
 
   SimControls& controls() { return controls_; }
   float time() const { return time_; }
+  // Spin the particles are currently integrated with (controls().spin applies on reset).
+  float runSpin() const { return runSpin_; }
   SimBackend& backend() { return *backend_; }
 
  private:
@@ -50,6 +53,7 @@ class Simulation {
   size_t current_ = 0;
   SimControls controls_;
   float time_ = 0.0f;
+  float runSpin_ = 0.0f;
   uint32_t frame_ = 0;
   uint32_t seed_ = 0x1234567u;
 };

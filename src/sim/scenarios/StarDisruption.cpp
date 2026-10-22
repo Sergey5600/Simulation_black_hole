@@ -10,28 +10,34 @@ ScenarioParams StarDisruption::params() const {
   p.star.inclination = inclinationDeg_ * 0.01745329252f;
   p.star.center = center_.x;
   p.star.velocity = center_.v;
-  p.runSeed = runSeed_;
   return p;
 }
 
 void StarDisruption::configureStep(StepParams& sp) const { sp.outerRadius = 6.0f * star_.startDistance; }
 
 void StarDisruption::reset(SimBackend& backend, uint32_t seed, float time) {
-  runSeed_ = seed;
   released_ = false;
   StarParams s = star_;
   s.inclination = inclinationDeg_ * 0.01745329252f;
   center_ = Particle{};
   starOrbitStart(s, center_.x, center_.v);
+  // Kerr: the Schwarzschild orbit's dx/dτ is used as the Kerr-Schild spatial
+  // 4-velocity at the (distant) start; store the covariant momentum and energy.
+  if (spin_ != 0.0f) {
+    const Vec3 X = kerr::toKS(center_.x);
+    const Vec3 P = kerr::momentumFromVelocity(X, kerr::toKS(center_.v), spin_);
+    center_.v = kerr::fromKS(P);
+    center_.energy = kerr::energyFor(X, P, spin_, 1.0f);
+  }
   center_.flags = kAlive;
-  backend.spawn(params(), 0, backend.size(), seed, time, /*initial=*/true);
+  backend.spawn(kernelParams(), 0, backend.size(), seed, time, /*initial=*/true);
 }
 
 void StarDisruption::update(SimBackend& backend, float time, const StepParams& sp) {
   if (released_) return;
   // Re-place the intact star on its center-of-mass orbit, then decide whether
   // tides win from the next step on.
-  backend.spawn(params(), 0, backend.size(), runSeed_, time, true);
+  backend.spawn(kernelParams(), 0, backend.size(), runSeed_, time, true);
 
   const Vec3 x0 = center_.x;
   StepParams cm = sp;

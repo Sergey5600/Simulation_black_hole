@@ -59,9 +59,9 @@ __global__ void stepKernel(Particle* particles, unsigned n, ScenarioParams sc, S
   if ((threadIdx.x & 31u) == 0u && mask) atomicAdd(aliveCount, static_cast<unsigned>(__popc(mask)));
 }
 
-__global__ void vertexKernel(const Particle* particles, unsigned n, PointVertex* out) {
+__global__ void vertexKernel(const Particle* particles, unsigned n, float spin, PointVertex* out) {
   const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) out[i] = makeVertex(particles[i]);
+  if (i < n) out[i] = makeVertex(particles[i], spin);
 }
 
 }  // namespace
@@ -82,6 +82,7 @@ struct CudaBackend::Impl {
 
   BackendStats stats;
   std::string name;
+  float spin = 0.0f;  // of the last spawn/step: selects the Kerr vertex path
 };
 
 bool CudaBackend::isAvailable(std::string* deviceName) {
@@ -136,6 +137,7 @@ void CudaBackend::resize(size_t count) {
 void CudaBackend::spawn(const ScenarioParams& sc, size_t begin, size_t count, uint32_t seed, float time,
                         bool initial) {
   Impl& m = *impl_;
+  m.spin = sc.spin;
   if (begin >= m.count) return;
   count = std::min(count, m.count - begin);
   if (count == 0) return;
@@ -146,6 +148,7 @@ void CudaBackend::spawn(const ScenarioParams& sc, size_t begin, size_t count, ui
 
 void CudaBackend::step(const ScenarioParams& sc, const StepParams& sp, uint32_t seed, float time) {
   Impl& m = *impl_;
+  m.spin = sp.spin;
   const auto t0 = std::chrono::steady_clock::now();
   unsigned alive = 0;
   if (m.count) {
@@ -181,7 +184,7 @@ bool CudaBackend::writeVerticesGl(unsigned glBuffer, uint64_t generation) {
   check(cudaGraphicsResourceGetMappedPointer(&ptr, &bytes, m.glResource), "mapped pointer");
   const bool fits = ptr && bytes >= m.count * sizeof(PointVertex);
   if (fits) {
-    vertexKernel<<<blocksFor(m.count), kBlock>>>(m.particles, static_cast<unsigned>(m.count),
+    vertexKernel<<<blocksFor(m.count), kBlock>>>(m.particles, static_cast<unsigned>(m.count), m.spin,
                                                  static_cast<PointVertex*>(ptr));
     check(cudaGetLastError(), "vertexKernel");
   }
@@ -199,7 +202,7 @@ void CudaBackend::writeVertices(PointVertex* dst) {
     if (!check(cudaMalloc(&m.staging, m.count * sizeof(PointVertex)), "cudaMalloc(staging)")) return;
     m.stagingCapacity = m.count;
   }
-  vertexKernel<<<blocksFor(m.count), kBlock>>>(m.particles, static_cast<unsigned>(m.count), m.staging);
+  vertexKernel<<<blocksFor(m.count), kBlock>>>(m.particles, static_cast<unsigned>(m.count), m.spin, m.staging);
   check(cudaMemcpy(dst, m.staging, m.count * sizeof(PointVertex), cudaMemcpyDeviceToHost), "download vertices");
 }
 

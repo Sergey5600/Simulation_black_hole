@@ -30,6 +30,8 @@ void Simulation::reset() {
   frame_ = 0;
   seed_ = pcgHash(seed_ + 1u);
   backend_->resize(current().particleCount());
+  runSpin_ = controls_.spin;
+  current().setRun(seed_, runSpin_);
   current().reset(*backend_, seed_, time_);
 }
 
@@ -44,12 +46,11 @@ void Simulation::advance(float simDt) {
   sp.dt = simDt;
   sp.timeMode = controls_.timeMode;
   sp.accuracy = controls_.accuracy;
+  sp.spin = runSpin_;
   sc.configureStep(sp);
   sc.update(*backend_, time_, sp);
 
-  ScenarioParams params = sc.params();
-  params.runSeed = seed_;
-  backend_->step(params, sp, pcgHash(seed_ ^ ++frame_), time_);
+  backend_->step(sc.kernelParams(), sp, pcgHash(seed_ ^ ++frame_), time_);
   time_ += simDt;
 }
 

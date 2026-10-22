@@ -34,14 +34,28 @@ class Scenario {
   virtual const char* subtitle() const = 0;
 
   virtual size_t particleCount() const = 0;
-  // Kernel parameters; the Simulation fills in ScenarioParams::runSeed.
+  // Scenario-specific kernel parameters (without the run-wide fields).
   virtual ScenarioParams params() const = 0;
+
+  // Run-wide settings, set by the Simulation before reset().
+  void setRun(uint32_t seed, float spin) {
+    runSeed_ = seed;
+    spin_ = spin;
+  }
+  float spin() const { return spin_; }
+  // params() plus the run-wide fields: use this whenever spawning.
+  ScenarioParams kernelParams() const {
+    ScenarioParams p = params();
+    p.runSeed = runSeed_;
+    p.spin = spin_;
+    return p;
+  }
 
   // Lets the scenario adjust integration (drag, domain size...) every frame.
   virtual void configureStep(StepParams& /*sp*/) const {}
 
   // Fills the (already resized) backend with the initial population.
-  // `seed` is constant for the run: use it as both spawn seed and runSeed.
+  // `seed` is the run seed (also in kernelParams().runSeed).
   virtual void reset(SimBackend& backend, uint32_t seed, float time) = 0;
 
   // Called once per simulation step before integration (e.g. to emit wave
@@ -57,6 +71,10 @@ class Scenario {
   virtual std::vector<ParamDesc> parameters() = 0;
   virtual std::vector<QuantityOption> quantities() const = 0;
   virtual ScenarioDefaults defaults() const = 0;
+
+ protected:
+  uint32_t runSeed_ = 0;
+  float spin_ = 0.0f;
 };
 
 }  // namespace bh

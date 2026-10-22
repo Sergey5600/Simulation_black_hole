@@ -25,6 +25,8 @@ PY
 shot disk                 "--scenario 0 --warmup 100"
 shot waves                "--scenario 1 --warmup 100"
 shot star                 "--scenario 2 --warmup 300"
+shot kerr-disk            "--scenario 0 --spin 0.9 --warmup 100"
+shot kerr-waves           "--scenario 1 --spin -0.7 --warmup 100"
 shot lens-disk            "--scenario 0 --lensing --view 0,0.12,45"
 shot lens-kerr            "--scenario 0 --lensing --spin 0.9 --view 0,0.12,45"
 shot lens-particles       "--scenario 0 --warmup 100 --lensing --lens-source particles --view 0,0.15,60"

@@ -30,7 +30,6 @@ class StarDisruption final : public Scenario {
   // Center of mass while the star is intact (integrated on the host).
   Particle center_{};
   bool released_ = false;
-  uint32_t runSeed_ = 0;
 };
 
 }  // namespace bh

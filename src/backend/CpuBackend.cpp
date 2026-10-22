@@ -27,6 +27,7 @@ void CpuBackend::resize(size_t count) {
 
 void CpuBackend::spawn(const ScenarioParams& sc, size_t begin, size_t count, uint32_t seed, float time,
                        bool initial) {
+  spin_ = sc.spin;
   // int loop indices: MSVC's OpenMP 2.0 only accepts signed int counters.
   const int end = static_cast<int>(std::min(begin + count, particles_.size()));
 #pragma omp parallel for schedule(static)
@@ -37,6 +38,7 @@ void CpuBackend::spawn(const ScenarioParams& sc, size_t begin, size_t count, uin
 
 void CpuBackend::step(const ScenarioParams& sc, const StepParams& sp, uint32_t seed, float time) {
   const auto t0 = std::chrono::steady_clock::now();
+  spin_ = sp.spin;
   const int n = static_cast<int>(particles_.size());
   int alive = 0;
 
@@ -58,7 +60,7 @@ void CpuBackend::writeVertices(PointVertex* dst) {
   const int n = static_cast<int>(particles_.size());
 #pragma omp parallel for schedule(static)
   for (int i = 0; i < n; ++i) {
-    dst[i] = makeVertex(particles_[static_cast<size_t>(i)]);
+    dst[i] = makeVertex(particles_[static_cast<size_t>(i)], spin_);
   }
 }
 

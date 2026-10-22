@@ -85,6 +85,7 @@ bool App::init() {
   sim_->addScenario(std::make_unique<PhotonWaves>());
   sim_->addScenario(std::make_unique<StarDisruption>());
   for (size_t i = 0; i < sim_->scenarioCount(); ++i) appearances_.push_back(sim_->scenario(i).defaults().appearance);
+  sim_->controls().spin = std::clamp(options_.spin, -0.998f, 0.998f);
 
   selectScenario(static_cast<size_t>(std::clamp(options_.scenario, 0, static_cast<int>(sim_->scenarioCount()) - 1)));
   applyParamOverrides();
@@ -102,7 +103,6 @@ bool App::init() {
   uiState_.showPanel = !options_.hideUi;
   render_.lensing = options_.lensing;
   if (options_.lensSource >= 0) appearance().lensSource = options_.lensSource;
-  render_.spin = options_.spin;
   if (options_.rayStep > 0.0f) render_.rayStepScale = options_.rayStep;
   return true;
 }
@@ -342,6 +342,7 @@ int App::record() {
   const int frames = std::max(1, static_cast<int>(std::lround(options_.recordSeconds * static_cast<float>(options_.recordFps))));
   const float simDt = sim_->controls().timeScale / static_cast<float>(options_.recordFps);
 
+  render_.spin = sim_->runSpin();
   RenderSettings settings = render_;
   settings.rayTileSize = 256;
   if (infall) {
@@ -489,6 +490,7 @@ int App::run() {
     sim_->update(dt);
 
     uploadPoints();
+    render_.spin = sim_->runSpin();  // one spin for particles and the ray tracer
     const size_t count = sim_->backend().size();
     renderer_.render(makeFrameInput(fbWidth, fbHeight), render_);
 

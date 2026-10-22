@@ -22,6 +22,7 @@ struct StepParams {
   float drag = 0.0f;             // phenomenological viscosity (massive only), 1/time
   float outerRadius = 500.0f;    // particles beyond this are removed
   float horizonLapse = 0.02f;    // coordinate mode: remove once 1 - 2M/r drops below this
+  float spin = 0.0f;             // a/M; != 0 switches to the Kerr integrator
 };
 
 namespace detail {
@@ -41,10 +42,63 @@ BH_HD BH_INLINE State derivative(const State& s, float h2, float kappa, float in
 
 }  // namespace detail
 
+// Kerr: RK4 on Hamilton's equations in Cartesian Kerr-Schild coordinates
+// (core/Kerr.hpp), stepping the affine parameter λ (= proper time for matter).
+// In observer-time mode each step covers h_λ · dt_BL/dλ of distant-observer
+// time, which diverges at the horizon: infalling matter freezes there.
+BH_HD inline bool advanceParticleKerr(Particle& p, const StepParams& sp) {
+  const float a = sp.spin;
+  const float kappa = gr::kappaOf(kindOf(p));
+  const bool coordinate = sp.timeMode == TimeMode::Coordinate;
+  const float rh = kerr::horizon(a);
+  Vec3 X = kerr::toKS(p.x), P = kerr::toKS(p.v);
+  float E = p.energy;
+
+  float remaining = sp.dt;
+  for (int i = 0; i < sp.maxSubsteps && remaining > 0.0f; ++i) {
+    const float r = kerr::radius(X, a);
+    const bool atHorizon = coordinate ? r < rh * (1.0f + sp.horizonLapse) : r <= rh;
+    if (atHorizon || r > sp.outerRadius || !(r == r) || !(E == E)) {
+      p.flags &= ~kAlive;
+      p.x = kerr::fromKS(X);
+      return false;
+    }
+
+    Vec3 dx1, dp1;
+    kerr::derivatives(X, P, E, a, dx1, dp1);
+    const float rate = coordinate ? fmaxf(kerr::observerTimeRate(X, P, dx1, E, a), 1e-4f) : 1.0f;
+    const float stepLambda = sp.accuracy * (kappa > 0.0f ? r * sqrtf(r) : r);
+    const float h = fminf(stepLambda, remaining / rate);
+
+    Vec3 dx2, dp2, dx3, dp3, dx4, dp4;
+    kerr::derivatives(X + dx1 * (0.5f * h), P + dp1 * (0.5f * h), E, a, dx2, dp2);
+    kerr::derivatives(X + dx2 * (0.5f * h), P + dp2 * (0.5f * h), E, a, dx3, dp3);
+    kerr::derivatives(X + dx3 * h, P + dp3 * h, E, a, dx4, dp4);
+    const float w = h / 6.0f;
+    X += (dx1 + dx2 * 2.0f + dx3 * 2.0f + dx4) * w;
+    P += (dp1 + dp2 * 2.0f + dp3 * 2.0f + dp4) * w;
+
+    if (sp.drag > 0.0f && kappa > 0.0f) {  // viscous drag on the azimuthal momentum
+      const Vec3 n = normalize(X);
+      const Vec3 pPerp = P - n * dot(n, P);
+      P -= pPerp * fminf(sp.drag * h, 0.5f);
+      E = kerr::energyFor(X, P, a, kappa);
+    }
+
+    remaining -= h * rate;
+    p.age += h * rate;
+  }
+  p.x = kerr::fromKS(X);
+  p.v = kerr::fromKS(P);
+  p.energy = E;
+  return true;
+}
+
 // Advances one particle by sp.dt with adaptive RK4 substeps. Marks it dead when
 // it reaches the horizon or leaves the domain. Returns whether it is still alive.
 BH_HD inline bool advanceParticle(Particle& p, const StepParams& sp) {
   if (!isAlive(p)) return false;
+  if (sp.spin != 0.0f) return advanceParticleKerr(p, sp);
   const float kappa = gr::kappaOf(kindOf(p));
   const bool coordinate = sp.timeMode == TimeMode::Coordinate;
 

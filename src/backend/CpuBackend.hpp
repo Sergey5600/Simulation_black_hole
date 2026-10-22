@@ -25,6 +25,7 @@ class CpuBackend final : public SimBackend {
  private:
   std::vector<Particle> particles_;
   BackendStats stats_;
+  float spin_ = 0.0f;  // of the last spawn/step: selects the Kerr vertex path
 };
 
 }  // namespace bh

@@ -16,9 +16,7 @@ void AccretionDisk::configureStep(StepParams& sp) const {
 }
 
 void AccretionDisk::reset(SimBackend& backend, uint32_t seed, float time) {
-  ScenarioParams p = params();
-  p.runSeed = seed;
-  backend.spawn(p, 0, backend.size(), seed, time, /*initial=*/true);
+  backend.spawn(kernelParams(), 0, backend.size(), seed, time, /*initial=*/true);
 }
 
 std::vector<ParamDesc> AccretionDisk::parameters() {

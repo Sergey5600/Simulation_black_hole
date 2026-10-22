@@ -169,6 +169,123 @@ void testKerr() {
   }
 }
 
+// Kerr particles: spawn a state in the Kerr representation.
+Particle kerrParticle(Vec3 X, Vec3 P, float a, bool photon) {
+  Particle q{};
+  q.x = kerr::fromKS(X);
+  q.v = kerr::fromKS(P);
+  q.flags = kAlive | (photon ? kPhoton : 0u);
+  q.energy = kerr::energyFor(X, P, a, photon ? 0.0f : 1.0f);
+  return q;
+}
+
+Particle kerrCircular(float r, float a) {
+  float ut = 1.0f, omega = 0.0f;
+  kerr::circularOrbit(r, a, ut, omega);
+  const Vec3 X{r, -a, 0.0f};  // KS azimuth φ = 0
+  const Vec3 u = Vec3{-X.y, X.x, 0.0f} * (omega * ut);
+  return kerrParticle(X, kerr::covariantMomentum(X, u, ut, a), a, false);
+}
+
+void testKerrParticles() {
+  // The mass shell reproduces the Bardeen-Press-Teukolsky circular-orbit energy.
+  {
+    const float a = 0.9f, r = 4.0f;
+    // BPT: E = (r^1.5 - 2 r^0.5 + a) / (r^0.75 sqrt(r^1.5 - 3 r^0.5 + 2a)).
+    const double sr = std::sqrt(r);
+    const double e = (r * sr - 2.0 * sr + a) / (std::pow(r, 0.75) * std::sqrt(r * sr - 3.0 * sr + 2.0 * a));
+    const Particle q = kerrCircular(r, a);
+    checkNear("Kerr a=0.9 circular orbit r=4: energy from mass shell = BPT E", q.energy, e, 1e-4);
+  }
+  // A circular orbit stays circular (Boyer-Lindquist r) over 3 orbits.
+  {
+    const float a = 0.9f, r = 4.0f;
+    Particle q = kerrCircular(r, a);
+    StepParams sp = properTime(1.0f, 0.005f);
+    sp.spin = a;
+    float rMin = r, rMax = r;
+    for (int i = 0; i < 150; ++i) {
+      advanceParticle(q, sp);
+      const float rr = kerr::radius(kerr::toKS(q.x), a);
+      rMin = std::fmin(rMin, rr);
+      rMax = std::fmax(rMax, rr);
+    }
+    checkNear("Kerr a=0.9 prograde circular orbit r=4 stays circular (min r)", rMin, r, 2e-3);
+    checkNear("Kerr a=0.9 prograde circular orbit r=4 stays circular (max r)", rMax, r, 2e-3);
+  }
+  // Tiny spin reproduces the Schwarzschild proper orbital period.
+  {
+    const float a = 1e-3f, r = 10.0f;
+    Particle q = kerrCircular(r, a);
+    const Vec3 start = q.x;
+    const double period = 2.0 * kPi * std::pow(r, 1.5) * std::sqrt(1.0 - 3.0 / r);
+    StepParams sp = properTime(static_cast<float>(period / 200.0), 0.005f);
+    sp.spin = a;
+    for (int i = 0; i < 200; ++i) advanceParticle(q, sp);
+    check(length(q.x - start) < 0.05f, "Kerr a=0.001 orbit returns after the Schwarzschild period", length(q.x - start),
+          0.0);
+  }
+  // Observer time: infall freezes just outside r+.
+  {
+    const float a = 0.9f;
+    Particle q = kerrParticle({10.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, a, false);
+    StepParams sp = properTime(1000.0f);
+    sp.spin = a;
+    sp.timeMode = TimeMode::Coordinate;
+    sp.horizonLapse = 0.01f;
+    for (int i = 0; i < 400 && advanceParticle(q, sp); ++i) {
+    }
+    const float rEnd = kerr::radius(kerr::toKS(q.x), a);
+    const float rh = kerr::horizon(a);
+    check(!isAlive(q) && rEnd > rh && rEnd < rh * 1.03f, "Kerr a=0.9 observer-time infall freezes just outside r+", rEnd,
+          rh);
+  }
+  // Photons through the particle integrator: prograde capture threshold b = 2.845.
+  {
+    const float a = 0.9f, bc = 2.844782f;
+    auto captured = [&](float b) {
+      const float R = 300.0f;
+      Vec3 X{-R, 0.0f, 0.0f};
+      Vec3 P = kerr::nullMomentum(X, {1, 0, 0}, a);
+      X.y = -b / P.x;
+      P = kerr::nullMomentum(X, {1, 0, 0}, a);
+      Particle q = kerrParticle(X, P, a, true);
+      q.energy = 1.0f;
+      StepParams sp = properTime(2000.0f, 0.002f);
+      sp.spin = a;
+      sp.outerRadius = 2.0f * R;
+      advanceParticle(q, sp);
+      return kerr::radius(kerr::toKS(q.x), a) < 10.0f;
+    };
+    const bool in = captured(bc * 0.99f), out = captured(bc * 1.01f);
+    check(in && !out, "Kerr particle integrator: prograde photon capture at b = 2.845", in ? (out ? 2 : 1) : 0, 1);
+  }
+  // Every scenario spawns finite Kerr states and survives a few steps.
+  for (ScenarioType type : {ScenarioType::AccretionDisk, ScenarioType::PhotonWaves, ScenarioType::StarDisruption}) {
+    CpuBackend backend;
+    ScenarioParams sc;
+    sc.type = type;
+    sc.spin = 0.7f;
+    sc.respawnDead = type == ScenarioType::AccretionDisk;
+    sc.star.center = {-60.0f, 0.0f, 0.0f};
+    sc.star.velocity = {0.12f, 0.0f, 0.03f};
+    backend.resize(5000);
+    backend.spawn(sc, 0, backend.size(), 3u, 0.0f, true);
+    StepParams sp;
+    sp.dt = 1.0f;
+    sp.spin = sc.spin;
+    for (int i = 0; i < 20; ++i) backend.step(sc, sp, 9u + static_cast<uint32_t>(i), static_cast<float>(i));
+    std::vector<PointVertex> verts(backend.size());
+    backend.writeVertices(verts.data());
+    size_t finite = 0;
+    for (const PointVertex& pv : verts) {
+      finite += std::isfinite(pv.pos[0]) && std::isfinite(pv.dir[0]) && std::isfinite(pv.value);
+    }
+    check(finite == verts.size() && backend.stats().alive > 0, "Kerr a=0.7 scenario spawns and steps finite states",
+          static_cast<double>(finite), static_cast<double>(verts.size()));
+  }
+}
+
 void testBackendSmoke() {
   CpuBackend backend;
   ScenarioParams sc;
@@ -204,6 +321,7 @@ int main() {
   testWeakDeflection();
   testRedshift();
   testKerr();
+  testKerrParticles();
   testBackendSmoke();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "ALL PASSED", g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

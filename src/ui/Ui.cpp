@@ -72,6 +72,11 @@ void drawSimulation(UiContext& ctx, UiActions& out) {
 
   SliderRow("Step size", &c.accuracy, 0.002f, 0.1f, "%.3f", true,
             "RK4 step as a fraction of the local dynamical time. Smaller is more accurate and slower.");
+  SliderRow("Spin a", &c.spin, -0.998f, 0.998f, "%.3f", false,
+            "Rotation of the hole (Kerr metric), a = J/(Mc). Positive = same sense as the disk. Particles and "
+            "the ray tracer both use it: frame dragging, a lopsided shadow, and an ISCO that moves in (1.24 M "
+            "at a = 0.998) or out (9 M at a = -1). Restarts the scenario.");
+  if (ImGui::IsItemDeactivatedAfterEdit()) out.reset = true;
   EndSection();
 }
 
@@ -177,10 +182,6 @@ void drawRayTracing(UiContext& ctx) {
             "geodesic: the sky bends, the shadow appears (radius 3\xE2\x88\x9A" "3 M) and the back of the disk "
             "shows above and below the hole. Key: L.");
   if (r.lensing) {
-    SliderRow("Spin a", &r.spin, -0.998f, 0.998f, "%.3f", false,
-              "Rotation of the hole (Kerr metric), a = J/(Mc). Positive = same sense as the disk. The shadow "
-              "gets lopsided, frame dragging twists the image and the ISCO moves in (1.24 M at a = 0.998). "
-              "Ray tracer only for now: the particles still use the Schwarzschild metric.");
     Appearance& a = ctx.appearance;
     PropertyLabel("Light from",
                   "What the ray tracer sees. Thin disk: analytic Novikov-Thorne disk with the exact redshift of "

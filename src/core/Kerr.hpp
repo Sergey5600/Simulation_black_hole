@@ -80,4 +80,70 @@ BH_HD inline Vec3 nullMomentum(Vec3 X, Vec3 dir, float a) {
   return dir * ((-B + sqrtf(B * B - 4.0f * A * C)) / (2.0f * A));
 }
 
+// World (y-up, disk rotating about +y) <-> formula axes (spin along +Z).
+BH_HD BH_INLINE Vec3 toKS(Vec3 w) { return Vec3{w.z, w.x, w.y}; }
+BH_HD BH_INLINE Vec3 fromKS(Vec3 k) { return Vec3{k.y, k.z, k.x}; }
+
+// Energy E = -p_t that puts the spatial momentum p on the mass shell
+// (κ = 1 massive, κ = 0 photon):  (1+f) E² + 2 f (l·p) E - (|p|² - f (l·p)² + κ) = 0.
+BH_HD inline float energyFor(Vec3 X, Vec3 p, float a, float kappa) {
+  const Field k = field(X, a);
+  const float lp = dot(k.l, p);
+  const float A = 1.0f + k.f;
+  const float B = 2.0f * k.f * lp;
+  const float C = -(dot(p, p) - k.f * lp * lp + kappa);
+  return (-B + sqrtf(fmaxf(B * B - 4.0f * A * C, 0.0f))) / (2.0f * A);
+}
+
+// dt/dλ in Boyer-Lindquist time (the clock of a distant observer), given the
+// Kerr-Schild velocity dX/dλ:  dt_KS/dλ = E + f (l·p)_full,  t_BL = t_KS - ∫ 2Mr/Δ dr.
+// Diverges at the horizon, which is what freezes infalling matter in observer time.
+BH_HD inline float observerTimeRate(Vec3 X, Vec3 p, Vec3 dX, float energy, float a) {
+  const float r = radius(X, a);
+  const float r2 = r * r;
+  const float q = r2 + a * a;
+  const float sigma = r2 * r2 + a * a * X.z * X.z;
+  const float f = 2.0f * r2 * r / sigma;
+  const Vec3 l{(r * X.x + a * X.y) / q, (r * X.y - a * X.x) / q, X.z / r};
+  const float dtKS = energy + f * (energy + dot(l, p));
+  const Vec3 gradR = Vec3{r2 * X.x, r2 * X.y, q * X.z} * (r / sigma);
+  const float delta = r2 - 2.0f * r + a * a;
+  return dtKS - (2.0f * r / delta) * dot(gradR, dX);
+}
+
+// Prograde circular equatorial orbit at Boyer-Lindquist radius r (Bardeen,
+// Press & Teukolsky 1972): u^t = dt/dτ and Ω = dφ/dt. Returns false where no
+// circular orbit exists (inside the photon orbit).
+BH_HD inline bool circularOrbit(float r, float a, float& ut, float& omega) {
+  const float sr = sqrtf(r), r15 = r * sr;
+  const float s = r15 - 3.0f * sr + 2.0f * a;
+  if (s <= 1e-4f) return false;
+  ut = (r15 + a) / (sqrtf(sr) * sr * sqrtf(s));  // (r^1.5 + a) / (r^0.75 sqrt(s))
+  omega = 1.0f / (r15 + a);
+  return true;
+}
+
+// Covariant Kerr-Schild momentum p_i of a particle with 4-velocity (u^t, u⃗):
+// g_μν = η_μν + f l_μ l_ν  =>  p_i = u^i + f l_i (u^t + l⃗·u⃗).
+// For circular orbits u^t and u^φ are the same in Boyer-Lindquist and Kerr-Schild
+// coordinates (they differ only by functions of r, and dr = 0), so this needs no
+// coordinate-transformation signs.
+BH_HD inline Vec3 covariantMomentum(Vec3 X, Vec3 u, float ut, float a) {
+  const Field k = field(X, a);
+  return u + k.l * (k.f * (ut + dot(k.l, u)));
+}
+
+// Covariant momentum of a massive particle with spatial velocity u⃗ = dX/dτ:
+// u^t follows from g_μν u^μ u^ν = -1, i.e.
+// (1-f) (u^t)² - 2 f (l·u) u^t - (|u|² + f (l·u)² + 1) = 0.
+BH_HD inline Vec3 momentumFromVelocity(Vec3 X, Vec3 u, float a) {
+  const Field k = field(X, a);
+  const float lu = dot(k.l, u);
+  const float A = 1.0f - k.f;
+  const float B = -2.0f * k.f * lu;
+  const float C = -(dot(u, u) + k.f * lu * lu + 1.0f);
+  const float ut = (-B + sqrtf(fmaxf(B * B - 4.0f * A * C, 0.0f))) / (2.0f * A);
+  return covariantMomentum(X, u, ut, a);
+}
+
 }  // namespace bh::kerr

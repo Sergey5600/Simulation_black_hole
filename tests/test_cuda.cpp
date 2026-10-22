@@ -35,6 +35,7 @@ bool compare(const char* label, ScenarioParams sc, int steps, float dt) {
   gpu.spawn(sc, 0, n, 99u, 0.0f, true);
   StepParams sp;
   sp.dt = dt;
+  sp.spin = sc.spin;
   for (int i = 0; i < steps; ++i) {
     cpu.step(sc, sp, 1000u + static_cast<uint32_t>(i), static_cast<float>(i) * dt);
     gpu.step(sc, sp, 1000u + static_cast<uint32_t>(i), static_cast<float>(i) * dt);
@@ -72,6 +73,10 @@ int main() {
   waves.type = ScenarioType::PhotonWaves;
   waves.wave.photonsPerFront = 100000;
   failures += !compare("photon waves", waves, 60, 1.0f);
+
+  ScenarioParams kerrDisk = disk;
+  kerrDisk.spin = 0.7f;
+  failures += !compare("disk, a = 0.7", kerrDisk, 60, 1.0f);
 
   std::printf("\n%s\n", failures ? "FAILED" : "ALL PASSED");
   return failures ? 1 : 0;

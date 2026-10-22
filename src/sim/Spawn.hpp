@@ -73,6 +73,7 @@ struct ScenarioParams {
   ScenarioType type = ScenarioType::AccretionDisk;
   bool respawnDead = false;  // refill dead slots every step (continuous inflow)
   uint32_t runSeed = 0;      // fixed for a whole run (coherent patterns across refills)
+  float spin = 0.0f;         // a/M: != 0 spawns Kerr states (Kerr-Schild momentum + energy)
   DiskParams disk;
   WaveParams wave;
   StarParams star;
@@ -97,8 +98,8 @@ BH_HD inline float diskClumps(float r, float phi, float time, uint32_t seed) {
   return n * n;
 }
 
-BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, uint32_t runSeed, float time,
-                            bool initial, Particle& p) {
+BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, uint32_t runSeed, float spin,
+                            float time, bool initial, Particle& p) {
   Rng rng(index, seed);
   // Initial disk: log-uniform radii (surface density ∝ 1/r², dense bright inner disk).
   // Refill: new gas arrives at the outer edge.
@@ -123,6 +124,23 @@ BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, 
   const float verticalKick = rng.gaussian();
   p.x = radial * r + up * (r * d.thickness * height);
   p.v = tangent * speed + radial * (vc * d.eccentricity * 0.5f * radialKick) + up * (vc * d.thickness * verticalKick);
+  if (spin != 0.0f) {
+    // Kerr: exact prograde circular orbit at Boyer-Lindquist radius rr, then the
+    // same relative perturbations of the 4-velocity; the energy comes from the
+    // mass shell, so the perturbed state is still a valid geodesic.
+    float rr = fmaxf(r, 1.2f), ut = 1.0f, omega = 0.0f;
+    for (int k = 0; k < 64 && !kerr::circularOrbit(rr, spin, ut, omega); ++k) rr += 0.1f;  // outside the photon orbit
+    const Vec3 X{rr * c + spin * s, rr * s - spin * c, rr * d.thickness * height};
+    const Vec3 tangentKS{-X.y, X.x, 0.0f};  // ∂X/∂φ
+    const Vec3 radialKS{c, s, 0.0f};        // ∂X/∂r
+    const float vOrbit = omega * ut * length(tangentKS);
+    const Vec3 u = tangentKS * (omega * ut * (speed / vc)) + radialKS * (vOrbit * d.eccentricity * 0.5f * radialKick) +
+                   Vec3{0.0f, 0.0f, vOrbit * d.thickness * verticalKick};
+    const Vec3 P = kerr::covariantMomentum(X, u, ut, spin);
+    p.x = kerr::fromKS(X);
+    p.v = kerr::fromKS(P);
+    p.energy = kerr::energyFor(X, P, spin, 1.0f);
+  }
   p.age = 0.0f;
   p.flags = kAlive;
   // Clumpy brightness: spiral pattern times per-particle grain.
@@ -130,7 +148,7 @@ BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, 
   p.birth = time;
 }
 
-BH_HD inline void spawnWave(const WaveParams& w, uint32_t index, float time, Particle& p) {
+BH_HD inline void spawnWave(const WaveParams& w, uint32_t index, float spin, float time, Particle& p) {
   const uint32_t n = w.photonsPerFront > 0 ? static_cast<uint32_t>(w.photonsPerFront) : 1u;
   const uint32_t i = index % n;
   const Vec3 dir{cosf(w.incidence), 0.0f, sinf(w.incidence)};
@@ -173,13 +191,18 @@ BH_HD inline void spawnWave(const WaveParams& w, uint32_t index, float time, Par
   }
   p.x = x;
   p.v = v;
+  if (spin != 0.0f) {  // null Kerr-Schild momentum along v with E = 1
+    p.v = kerr::fromKS(kerr::nullMomentum(kerr::toKS(x), kerr::toKS(normalize(v)), spin));
+    p.energy = 1.0f;
+  }
   p.age = 0.0f;
   p.flags = kAlive | kPhoton;
   p.tag = 0.0f;
   p.birth = time;
 }
 
-BH_HD inline void spawnStar(const StarParams& s, uint32_t index, uint32_t runSeed, float time, Particle& p) {
+BH_HD inline void spawnStar(const StarParams& s, uint32_t index, uint32_t runSeed, float spin, float time,
+                            Particle& p) {
   // Centrally concentrated ball. The offset depends only on (index, runSeed),
   // so re-spawning every frame while the star is intact keeps it rigid.
   // tag = depth inside the star (0 core, 1 surface).
@@ -191,7 +214,8 @@ BH_HD inline void spawnStar(const StarParams& s, uint32_t index, uint32_t runSee
   const Vec3 offset = Vec3{rho * cosf(phi), z, rho * sinf(phi)} * (depth * s.starRadius);
 
   p.x = s.center + offset;
-  p.v = s.velocity;
+  p.v = s.velocity;  // Kerr: the center's covariant momentum (the star moves as one body)
+  if (spin != 0.0f) p.energy = kerr::energyFor(kerr::toKS(p.x), kerr::toKS(p.v), spin, 1.0f);
   p.age = 0.0f;
   p.flags = kAlive;
   p.tag = depth;
@@ -205,9 +229,11 @@ BH_HD inline void spawnStar(const StarParams& s, uint32_t index, uint32_t runSee
 BH_HD inline void spawnParticle(const ScenarioParams& sc, uint32_t index, uint32_t seed, float time, bool initial,
                                 Particle& p) {
   switch (sc.type) {
-    case ScenarioType::AccretionDisk: detail::spawnDisk(sc.disk, index, seed, sc.runSeed, time, initial, p); break;
-    case ScenarioType::PhotonWaves: detail::spawnWave(sc.wave, index, time, p); break;
-    case ScenarioType::StarDisruption: detail::spawnStar(sc.star, index, sc.runSeed, time, p); break;
+    case ScenarioType::AccretionDisk:
+      detail::spawnDisk(sc.disk, index, seed, sc.runSeed, sc.spin, time, initial, p);
+      break;
+    case ScenarioType::PhotonWaves: detail::spawnWave(sc.wave, index, sc.spin, time, p); break;
+    case ScenarioType::StarDisruption: detail::spawnStar(sc.star, index, sc.runSeed, sc.spin, time, p); break;
   }
 }
 

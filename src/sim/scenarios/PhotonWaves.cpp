@@ -46,7 +46,7 @@ void PhotonWaves::update(SimBackend& backend, float time, const StepParams& /*sp
 
 void PhotonWaves::emitFront(SimBackend& backend, float time) {
   const size_t perFront = static_cast<size_t>(wave_.photonsPerFront);
-  backend.spawn(params(), static_cast<size_t>(nextSlot_) * perFront, perFront, 0u, time, true);
+  backend.spawn(kernelParams(), static_cast<size_t>(nextSlot_) * perFront, perFront, 0u, time, true);
   nextSlot_ = (nextSlot_ + 1) % fronts_;
 }
 
