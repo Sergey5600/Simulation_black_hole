@@ -61,6 +61,8 @@ if(MSVC)
   # /utf-8: sources contain Greek letters and math symbols in UI strings.
   target_compile_options(bh_sim PRIVATE /W4 /utf-8)
   target_compile_options(blackhole PRIVATE /W4 /utf-8)
+  # Standard sscanf/snprintf are fine here; silence MSVC's "_s variant" advice.
+  target_compile_definitions(blackhole PRIVATE _CRT_SECURE_NO_WARNINGS)
   set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT blackhole)
 else()
   target_compile_options(bh_sim PRIVATE -Wall -Wextra -O3)

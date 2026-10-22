@@ -8,7 +8,6 @@
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
-#define _CRT_SECURE_NO_WARNINGS
 #endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
