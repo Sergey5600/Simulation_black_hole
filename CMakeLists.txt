@@ -83,6 +83,7 @@ add_executable(blackhole
   src/app/App.cpp
   src/render/GlUtil.cpp
   src/render/Camera.cpp
+  src/render/CameraPath.cpp
   src/render/Renderer.cpp
   src/render/Screenshot.cpp
   src/ui/Theme.cpp

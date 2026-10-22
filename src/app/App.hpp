@@ -29,6 +29,17 @@ struct AppOptions {
   float yaw = NAN, pitch = NAN, distance = NAN;             // optional camera override
   bool lensing = false;
   float spin = 0.0f;
+  float rayStep = 0.0f;  // > 0 overrides the ray-tracing step
+
+  // Video recording (--record): numbered frames + make_video.bat, then exit.
+  std::string recordDir;
+  int recordWidth = 3840;
+  int recordHeight = 2160;
+  float recordSeconds = 60.0f;
+  int recordFps = 60;
+  int ssaa = 2;                    // supersampling: render at ssaa x the size, box-filter down
+  std::string cameraPath = "flyby";
+  std::string frameFormat = "jpg";
 };
 
 class App {
@@ -48,6 +59,9 @@ class App {
   void applyParamOverrides();
   void applyActions(const ui::UiActions& actions);
   void handleMouse();
+  void uploadPoints();
+  FrameInput makeFrameInput(int width, int height);
+  int record();
   void takeScreenshot(const std::string& path, int width, int height);
 
   Appearance& appearance() { return appearances_[sim_->currentIndex()]; }

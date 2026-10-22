@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,7 +31,17 @@ void printUsage() {
       "  --no-vsync          uncapped frame rate\n"
       "  --backend B         auto (default: CUDA if available), cpu or cuda\n"
       "  --lensing           start with ray-traced gravitational lensing on\n"
-      "  --spin A            black hole spin a/M for the ray tracer (-0.998 .. 0.998)\n");
+      "  --spin A            black hole spin a/M for the ray tracer (-0.998 .. 0.998)\n"
+      "  --ray-step S        ray-tracing step as a fraction of r (smaller = sharper, slower)\n"
+      "\n"
+      "Video recording (renders off-screen, resumable, then exits):\n"
+      "  --record DIR        write frame_00000.jpg ... and make_video.bat into DIR\n"
+      "  --record-size WxH   output resolution (default 3840x2160)\n"
+      "  --duration S        seconds of video (default 60)\n"
+      "  --fps N             frames per second (default 60)\n"
+      "  --ssaa N            supersampling factor 1-4 (default 2)\n"
+      "  --path NAME         camera path: flyby (default), orbit, dive\n"
+      "  --format F          jpg (default) or png\n");
 }
 
 }  // namespace
@@ -68,6 +79,22 @@ int main(int argc, char** argv) {
       opt.lensing = true;
     } else if (!std::strcmp(a, "--spin")) {
       opt.spin = static_cast<float>(std::atof(next()));
+    } else if (!std::strcmp(a, "--ray-step")) {
+      opt.rayStep = static_cast<float>(std::atof(next()));
+    } else if (!std::strcmp(a, "--record")) {
+      opt.recordDir = next();
+    } else if (!std::strcmp(a, "--record-size")) {
+      std::sscanf(next(), "%dx%d", &opt.recordWidth, &opt.recordHeight);
+    } else if (!std::strcmp(a, "--duration")) {
+      opt.recordSeconds = static_cast<float>(std::atof(next()));
+    } else if (!std::strcmp(a, "--fps")) {
+      opt.recordFps = std::max(1, std::atoi(next()));
+    } else if (!std::strcmp(a, "--ssaa")) {
+      opt.ssaa = std::atoi(next());
+    } else if (!std::strcmp(a, "--path")) {
+      opt.cameraPath = next();
+    } else if (!std::strcmp(a, "--format")) {
+      opt.frameFormat = next();
     } else if (!std::strcmp(a, "--backend")) {
       opt.backend = next();
     } else if (!std::strcmp(a, "--no-vsync")) {

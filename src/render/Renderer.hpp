@@ -35,6 +35,9 @@ struct RenderSettings {
   bool particlesWhenLensing = false;  // overlay the (unlensed) particles
   int rayMaxSteps = 600;
   float rayStepScale = 0.035f;
+  // > 0: ray trace in tiles of this size and wait for each, so a very heavy
+  // frame never trips the Windows GPU watchdog (TDR, ~2 s per call).
+  int rayTileSize = 0;
 
   bool guideHorizon = false;
   bool guidePhotonSphere = false;
@@ -79,7 +82,8 @@ class Renderer {
   PointVertex* beginPointUpload(size_t count);
   void endPointUpload();
 
-  void render(const FrameInput& in, const RenderSettings& settings);
+  // Renders into `targetFbo` (0 = the window) of size in.width x in.height.
+  void render(const FrameInput& in, const RenderSettings& settings, GLuint targetFbo = 0);
 
   // 256x1 sRGB strips used as legends in the UI (ImTextureID-compatible).
   GLuint colormapTexture(Colormap c) const { return colormapStrips_[static_cast<size_t>(c)]; }

@@ -306,7 +306,7 @@ void Renderer::renderBloom(const RenderSettings& settings) {
   glDisable(GL_BLEND);
 }
 
-void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
+void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLuint targetFbo) {
   ensureTargets(in.width, in.height);
   const glm::mat4 viewProj = in.projection * in.view;
 
@@ -346,7 +346,19 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
   backgroundProgram_.set("uMaxSteps", settings.rayMaxSteps);
   backgroundProgram_.set("uStepScale", settings.rayStepScale);
   glBindVertexArray(emptyVao_);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
+  if (settings.lensing && settings.rayTileSize > 0) {
+    glEnable(GL_SCISSOR_TEST);
+    for (int y = 0; y < in.height; y += settings.rayTileSize) {
+      for (int x = 0; x < in.width; x += settings.rayTileSize) {
+        glScissor(x, y, settings.rayTileSize, settings.rayTileSize);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glFinish();
+      }
+    }
+    glDisable(GL_SCISSOR_TEST);
+  } else {
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
 
   // 2. Event horizon: writes depth so particles behind it are hidden. With
   //    lensing the ray tracer already drew the (larger) shadow: depth only.
@@ -419,7 +431,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
 
   // 5. Bloom + 6. tone-mapped composite into the window.
   if (settings.bloom) renderBloom(settings);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, targetFbo);
   glViewport(0, 0, in.width, in.height);
   glDisable(GL_DEPTH_TEST);
   compositeProgram_.use();

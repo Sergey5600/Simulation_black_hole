@@ -2,6 +2,7 @@
 
 #include <glad/gl.h>
 
+#include <cctype>
 #include <ctime>
 #include <filesystem>
 #include <vector>
@@ -17,19 +18,25 @@
 
 namespace bh {
 
-bool saveScreenshot(const std::string& path, int width, int height) {
-  std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 3);
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-  glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
-
+bool writeImage(const std::string& path, int width, int height, const unsigned char* rgb) {
   const std::filesystem::path p(path);
   if (p.has_parent_path()) {
     std::error_code ec;
     std::filesystem::create_directories(p.parent_path(), ec);
   }
   stbi_flip_vertically_on_write(1);
-  return stbi_write_png(path.c_str(), width, height, 3, pixels.data(), width * 3) != 0;
+  std::string ext = p.extension().string();
+  for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (ext == ".jpg" || ext == ".jpeg") return stbi_write_jpg(path.c_str(), width, height, 3, rgb, 95) != 0;
+  return stbi_write_png(path.c_str(), width, height, 3, rgb, width * 3) != 0;
+}
+
+bool saveScreenshot(const std::string& path, int width, int height) {
+  std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 3);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  return writeImage(path, width, height, pixels.data());
 }
 
 std::string makeScreenshotPath() {
