@@ -100,7 +100,7 @@ d²x/dλ² = −M x / r³ · (κ + 3h²/r²),   h = |x × v|,  κ = 1 (газ) /
 ## Сборка
 
 Нужны CMake ≥ 3.21, git, компилятор C++20 (Visual Studio 2022/2026 / GCC 11+ / Clang 14+)
-и OpenGL 4.3. Зависимости (GLFW, GLM, Dear ImGui) скачиваются при конфигурации,
+и OpenGL 4.5. Зависимости (GLFW, GLM, Dear ImGui) скачиваются при конфигурации,
 glad и stb лежат в `third_party/`. CUDA необязательна: если CUDA Toolkit
 установлен, GPU-бэкенд собирается автоматически, иначе — только CPU.
 
@@ -183,6 +183,10 @@ blackhole.exe --lensing --spin 0.9 --record film --duration 60 --fps 60
 драйвера Windows (TDR). В конце в папке появляется `make_video.bat`: он собирает
 `blackhole.mp4` через ffmpeg (`winget install ffmpeg`), H.264; там же есть
 закомментированная строка для HEVC 10-bit (меньше файл, нет полос в тёмных градиентах).
+
+| Падение: у горизонта | Падение: внутри горизонта |
+|---|---|
+| ![infall near](docs/images/infall_near.jpg) | ![infall inside](docs/images/infall_inside.jpg) |
 
 Траектории камеры (`--path`): `flyby` — подлёт сверху, спуск к плоскости диска,
 финал у фотонного кольца; `orbit` — полный облёт (с `--view` задаёт высоту и

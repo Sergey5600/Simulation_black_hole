@@ -40,7 +40,7 @@ bool App::init() {
   if (!glfwInit()) return false;
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);  // 4.4+: glClearTexImage for the particle volume
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
   window_ = glfwCreateWindow(options_.width, options_.height, "Black Hole", nullptr, nullptr);
@@ -49,7 +49,7 @@ bool App::init() {
   glfwSwapInterval(options_.vsync && options_.screenshot.empty() ? 1 : 0);
 
   if (!gladLoadGL(reinterpret_cast<GLADloadfunc>(glfwGetProcAddress))) {
-    std::fprintf(stderr, "Failed to load OpenGL 4.3 functions\n");
+    std::fprintf(stderr, "Failed to load OpenGL 4.5 functions\n");
     return false;
   }
   std::printf("OpenGL %s | %s\n", reinterpret_cast<const char*>(glGetString(GL_VERSION)),
@@ -87,6 +87,17 @@ bool App::init() {
   for (size_t i = 0; i < sim_->scenarioCount(); ++i) appearances_.push_back(sim_->scenario(i).defaults().appearance);
   sim_->controls().spin = std::clamp(options_.spin, -0.998f, 0.998f);
 
+  // The GPU handles far more particles: start every scenario denser.
+  if (usingCuda_) {
+    const std::pair<const char*, int> gpuCounts[] = {{"Particles", 2000000}, {"Photons per front", 16384}};
+    for (size_t i = 0; i < sim_->scenarioCount(); ++i) {
+      for (ParamDesc& d : sim_->scenario(i).parameters()) {
+        for (const auto& [label, count] : gpuCounts) {
+          if (d.type == ParamDesc::Type::Int && std::string(d.label) == label) *static_cast<int*>(d.value) = count;
+        }
+      }
+    }
+  }
   selectScenario(static_cast<size_t>(std::clamp(options_.scenario, 0, static_cast<int>(sim_->scenarioCount()) - 1)));
   applyParamOverrides();
 
