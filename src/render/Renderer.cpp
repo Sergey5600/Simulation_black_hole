@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "EmbeddedShaders.hpp"
+#include "core/Kerr.hpp"
 #include "core/Random.hpp"
 #include "core/Schwarzschild.hpp"
 
@@ -329,8 +330,15 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
   backgroundProgram_.set("uSkyBrightness", settings.stars ? settings.skyBrightness : 0.0f);
   backgroundProgram_.set("uLensing", settings.lensing);
   backgroundProgram_.set("uDisk", settings.lensedDisk);
-  backgroundProgram_.set("uDiskRadii", glm::vec2(settings.diskInner, settings.diskOuter));
-  backgroundProgram_.set("uDiskBrightness", settings.diskBrightness);
+  const float isco = kerr::isco(settings.spin);
+  backgroundProgram_.set("uDiskRadii", glm::vec2(settings.diskAtIsco ? isco : settings.diskInner, settings.diskOuter));
+  backgroundProgram_.set("uSpin", settings.spin);
+  backgroundProgram_.set("uHorizon", kerr::horizon(settings.spin));
+  backgroundProgram_.set("uIsco", isco);
+  // A smaller ISCO makes the hottest ring (6/r_isco)³ times brighter (same accretion
+  // rate). Like a camera, partially expose for it; colors stay physical.
+  const float exposureComp = settings.diskAutoExposure ? std::pow(isco / 6.0f, 1.5f) : 1.0f;
+  backgroundProgram_.set("uDiskBrightness", settings.diskBrightness * exposureComp);
   backgroundProgram_.set("uPeakTemperature", settings.diskTemperature);
   backgroundProgram_.set("uBeaming", settings.diskBeaming);
   backgroundProgram_.set("uColorShift", settings.diskColorShift);

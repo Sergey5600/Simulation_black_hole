@@ -95,6 +95,7 @@ bool App::init() {
   }
   uiState_.showPanel = !options_.hideUi;
   render_.lensing = options_.lensing;
+  render_.spin = options_.spin;
   return true;
 }
 

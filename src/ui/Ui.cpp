@@ -177,15 +177,23 @@ void drawRayTracing(UiContext& ctx) {
             "geodesic: the sky bends, the shadow appears (radius 3\xE2\x88\x9A" "3 M) and the back of the disk "
             "shows above and below the hole. Key: L.");
   if (r.lensing) {
+    SliderRow("Spin a", &r.spin, -0.998f, 0.998f, "%.3f", false,
+              "Rotation of the hole (Kerr metric), a = J/(Mc). Positive = same sense as the disk. The shadow "
+              "gets lopsided, frame dragging twists the image and the ISCO moves in (1.24 M at a = 0.998). "
+              "Ray tracer only for now: the particles still use the Schwarzschild metric.");
     ToggleRow("Thin disk", &r.lensedDisk,
               "Novikov-Thorne disk on Keplerian orbits, with the exact redshift of every ray (Doppler and "
               "gravitational).");
     if (r.lensedDisk) {
-      SliderRow("Disk inner edge", &r.diskInner, 2.5f, 20.0f, "%.1f M", false,
-                "ISCO = 6 M. Inside it gas cannot orbit; going lower is not physical for a thin disk.");
+      ToggleRow("Inner edge at ISCO", &r.diskAtIsco,
+                "A thin disk ends at the innermost stable circular orbit (6 M without spin).");
+      if (!r.diskAtIsco) SliderRow("Disk inner edge", &r.diskInner, 1.0f, 20.0f, "%.1f M");
       SliderRow("Disk outer edge", &r.diskOuter, 8.0f, 120.0f, "%.0f M");
       SliderRow("Disk temperature", &r.diskTemperature, 1500.0f, 40000.0f, "%.0f K", true);
       SliderRow("Disk brightness", &r.diskBrightness, 0.05f, 20.0f, "%.2f", true);
+      ToggleRow("Auto exposure", &r.diskAutoExposure,
+                "With spin the inner disk gets much hotter and brighter (up to 32% of the rest mass is radiated "
+                "instead of 6%). This partially compensates so the image does not blow out; colors stay physical.");
       ToggleRow("Disk beaming", &r.diskBeaming, "Brightness scales as g^4.");
       ToggleRow("Disk color shift", &r.diskColorShift, "Observed temperature = g \xC2\xB7 T.");
     }

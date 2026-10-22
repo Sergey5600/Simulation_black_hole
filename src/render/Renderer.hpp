@@ -22,11 +22,14 @@ struct RenderSettings {
 
   // Gravitational lensing (ray-traced background and thin disk).
   bool lensing = false;
+  float spin = 0.0f;                 // a/M of the ray-traced hole (Kerr when != 0)
   bool lensedDisk = true;
+  bool diskAtIsco = true;            // inner edge follows the ISCO of the spin
   float diskInner = 6.0f;
   float diskOuter = 30.0f;
   float diskTemperature = 5800.0f;
   float diskBrightness = 1.0f;
+  bool diskAutoExposure = true;      // compensate the much brighter inner disk of spinning holes
   bool diskBeaming = true;
   bool diskColorShift = true;
   bool particlesWhenLensing = false;  // overlay the (unlensed) particles

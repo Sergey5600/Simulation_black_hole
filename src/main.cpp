@@ -29,7 +29,8 @@ void printUsage() {
       "  --hide-ui           start with the UI hidden\n"
       "  --no-vsync          uncapped frame rate\n"
       "  --backend B         auto (default: CUDA if available), cpu or cuda\n"
-      "  --lensing           start with ray-traced gravitational lensing on\n");
+      "  --lensing           start with ray-traced gravitational lensing on\n"
+      "  --spin A            black hole spin a/M for the ray tracer (-0.998 .. 0.998)\n");
 }
 
 }  // namespace
@@ -65,6 +66,8 @@ int main(int argc, char** argv) {
       opt.hideUi = true;
     } else if (!std::strcmp(a, "--lensing")) {
       opt.lensing = true;
+    } else if (!std::strcmp(a, "--spin")) {
+      opt.spin = static_cast<float>(std::atof(next()));
     } else if (!std::strcmp(a, "--backend")) {
       opt.backend = next();
     } else if (!std::strcmp(a, "--no-vsync")) {

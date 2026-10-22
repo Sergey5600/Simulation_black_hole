@@ -26,13 +26,19 @@
 //   T^4 ∝ r^-3 (1 - sqrt(6M / r)).
 // Inside the ISCO the profile is zero; plunging gas gets a fading glow instead
 // (an approximation: real plunging gas keeps some heat).
-float diskTemperature(float r) {
-    const float kPeakT4 = 2.62282e-4;  // (6/49)^3 / 7
-    float t4 = pow(r, -3.0) * max(1.0 - sqrt(6.0 / r), 0.0);
+// The same profile for any inner edge rin (e.g. the Kerr ISCO): T⁴ ∝ r^-3 (1 - sqrt(rin / r)).
+// Always normalized to the non-spinning peak, i.e. the same accretion rate: the
+// outer disk looks the same for every spin, while a prograde spin (smaller ISCO)
+// makes the inner disk hotter than 1. `rh` is the horizon radius.
+float diskTemperatureIn(float r, float rin, float rh) {
+    const float kPeakT4 = 2.62282e-4;  // (6/49)^3 / 7: peak for rin = 6M
+    float t4 = pow(r, -3.0) * max(1.0 - sqrt(rin / r), 0.0);
     float t = pow(t4 / kPeakT4, 0.25);
-    float plunge = 0.5 * clamp((r - 2.0) / 4.0, 0.0, 1.0);
+    float plunge = 0.5 * clamp((r - rh) / (rin - rh), 0.0, 1.0);
     return max(t, plunge);
 }
+
+float diskTemperature(float r) { return diskTemperatureIn(r, 6.0, 2.0); }
 
 // Color of a black body (Tanner Helland's fit of the Planckian locus, 1000-40000 K),
 // returned as linear RGB with the brightest channel at 1.

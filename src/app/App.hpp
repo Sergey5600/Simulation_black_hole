@@ -28,6 +28,7 @@ struct AppOptions {
   std::vector<std::pair<std::string, std::string>> params;  // --set "Label=value"
   float yaw = NAN, pitch = NAN, distance = NAN;             // optional camera override
   bool lensing = false;
+  float spin = 0.0f;
 };
 
 class App {
