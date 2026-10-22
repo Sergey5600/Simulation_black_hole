@@ -97,3 +97,29 @@ vec3 skyEvents(vec3 dir, float g) {
 // The rest of the sky ages too: stars burn out, the expansion redshifts what is left.
 float cosmicDimming() { return uStory ? mix(1.0, 0.3, smoothstep(0.3, 1.0, uCosmicTime)) : 1.0; }
 float cosmicRedshift() { return uStory ? mix(1.0, 0.8, smoothstep(0.3, 1.0, uCosmicTime)) : 1.0; }
+
+// Story finale. ARTISTIC, not physics: near r = 0 the tides already squeeze the
+// view into a thin sheet across the fall where the light is blueshifted without
+// bound (that part is real and comes out of the ray tracer). General relativity
+// ends at the singularity; this layer imagines it as that sheet widening into
+// streaks of light, whiting out the frame, and going dark when proper time ends.
+uniform float uSingularity;  // 0 = off .. 1 = the end of proper time
+
+vec3 singularityLight(vec3 dir, vec3 radial) {
+    if (uSingularity <= 0.0) return vec3(0.0);
+    float s = uSingularity;
+    float across = dot(dir, radial);  // 0 in the squeeze plane
+    vec3 e1 = normalize(cross(radial, abs(radial.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 e2 = cross(radial, e1);
+    float azimuth = atan(dot(dir, e2), dot(dir, e1));
+    float width = mix(0.003, 0.4, s * s * s * s);
+    float sheet = exp(-across * across / (2.0 * width * width));
+    float streaks = 0.5 + 0.5 * fbm(vec3(azimuth * 7.0, s * 4.0, 1.7));
+    float halo = 0.1 * exp(-abs(across) / (0.03 + 0.25 * s));
+    float whiteout = 600.0 * smoothstep(0.85, 0.95, s);
+    // Fade in log space: the white-out sits far above display white.
+    float fade = smoothstep(0.95, 1.0, s);
+    float end = exp2(-16.0 * fade) * (1.0 - fade);
+    vec3 hot = planckRgb(40000.0) / dot(planckRgb(40000.0), kLuma);
+    return hot * ((sheet * streaks + halo) * 60.0 * s * s * s + whiteout) * end;
+}

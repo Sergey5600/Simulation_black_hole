@@ -56,10 +56,11 @@ void printUsage() {
       "  --auto-exposure B   on/off: meter the highlights like a video camera (default: on for\n"
       "                      journeys, whose sky gets 100x brighter near the horizon)\n"
       "  --mass M            hole mass in suns for the readout (default 4.3e6, Sagittarius A*)\n"
+      "  --no-singularity    peach story without its artistic finale (the singularity layer)\n"
       "  --format F          jpg (default) or png\n"
       "  --layers LIST       also write separate sequences for compositing into DIR/<layer>/:\n"
-      "                      beauty, sky, disk, particles (linear light, alpha = coverage: they add\n"
-      "                      up to beauty), hud (PNG with alpha), or all\n"
+      "                      beauty, sky, disk, particles, events, peach, singularity (linear light,\n"
+      "                      alpha = coverage: they add up to beauty), hud (PNG with alpha), or all\n"
       "  --layer-format F    exr (default: half-float OpenEXR, linear) or png (tone-mapped)\n");
 }
 
@@ -126,6 +127,8 @@ int main(int argc, char** argv) {
     } else if (!std::strcmp(a, "--auto-exposure")) {
       const std::string v = next();
       opt.autoExposure = v == "on" || v == "1" ? 1 : 0;
+    } else if (!std::strcmp(a, "--no-singularity")) {
+      opt.singularity = false;
     } else if (!std::strcmp(a, "--hud")) {
       opt.hud = true;
     } else if (!std::strcmp(a, "--mass")) {

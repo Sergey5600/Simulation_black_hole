@@ -455,6 +455,7 @@ void drawJourneyHud(const JourneyFrame& f, double solarMasses, float exposureEv)
         row("peach", line);
       }
     }
+    if (f.singularity > 0.0f) row("finale", "artistic: general relativity has no answer at r = 0");
     if (!std::isnan(exposureEv)) {
       std::snprintf(line, sizeof(line), "%+.1f EV (auto, like a video camera)", exposureEv);
       row("exposure", line);

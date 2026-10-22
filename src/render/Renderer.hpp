@@ -13,7 +13,7 @@ namespace bh {
 // Light sources that can also be rendered into separate images for compositing
 // (RenderSettings::captureLayers, Renderer::layerTexture). Linear HDR before
 // exposure and bloom; alpha = coverage. They add up to the full image.
-enum class Layer { Sky, Disk, Particles, Events, Peach, Count };
+enum class Layer { Sky, Disk, Particles, Events, Peach, Singularity, Count };
 constexpr int kLayerCount = static_cast<int>(Layer::Count);
 
 // Global look of the frame (independent of the scenario).
@@ -89,6 +89,7 @@ struct FrameInput {
     glm::mat3 peachBasis{1.0f};          // body axes: x, y = stem, z = suture side
     glm::vec3 stretchAxis{1.0f, 0.0f, 0.0f};
     float stretch = 1.0f, squeeze = 1.0f;
+    float singularity = 0.0f;            // artistic finale, 0..1
   } story;
 };
 

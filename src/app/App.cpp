@@ -326,7 +326,8 @@ bool parseLayers(const std::string& list, std::vector<LayerOutput>& out) {
   static const std::pair<const char*, int> kNames[] = {
       {"beauty", kLayerBeauty}, {"sky", static_cast<int>(Layer::Sky)}, {"disk", static_cast<int>(Layer::Disk)},
       {"particles", static_cast<int>(Layer::Particles)}, {"events", static_cast<int>(Layer::Events)},
-      {"peach", static_cast<int>(Layer::Peach)}, {"hud", kLayerHud}};
+      {"peach", static_cast<int>(Layer::Peach)}, {"singularity", static_cast<int>(Layer::Singularity)},
+      {"hud", kLayerHud}};
   std::string rest = list;
   while (!rest.empty()) {
     const size_t comma = rest.find(',');
@@ -343,7 +344,7 @@ bool parseLayers(const std::string& list, std::vector<LayerOutput>& out) {
       found = true;
     }
     if (!found) {
-      std::fprintf(stderr, "Unknown layer '%s' (beauty, sky, disk, particles, events, peach, hud or all)\n",
+      std::fprintf(stderr, "Unknown layer '%s' (beauty, sky, disk, particles, events, peach, singularity, hud or all)\n",
                    name.c_str());
       return false;
     }
@@ -422,6 +423,7 @@ void App::setJourneyCamera(FrameInput& in, const ViewPreset& base, const Journey
     in.story.stretch = f.peachStretch;
     in.story.squeeze = f.peachSqueeze;
   }
+  if (options_.singularity) in.story.singularity = f.singularity;
 }
 
 int App::record() {
@@ -584,7 +586,10 @@ int App::record() {
         if (l.accum.fbo) renderer_.accumulate(layerSource(l), l.accum, weight);
     }
     const float frameEv = exposureEv;
-    if (autoExposure) exposureEv += (meteredEv() - exposureEv) * (1.0f - std::exp(-1.0f / (0.4f * static_cast<float>(options_.recordFps))));
+    // The finale's white-out is meant to blow out: the camera stops adapting there.
+    const bool finale = firstPerson && journey.at(static_cast<float>(f) / static_cast<float>(std::max(frames - 1, 1))).singularity > 0.0f;
+    if (autoExposure && !finale)
+      exposureEv += (meteredEv() - exposureEv) * (1.0f - std::exp(-1.0f / (0.4f * static_cast<float>(options_.recordFps))));
     renderer_.downsample(samples > 1 ? accum.color : target.color, ssaa, out);
     const float uFrame = frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f;
     auto drawHud = [&] { ui::drawJourneyHud(journey.at(uFrame), options_.solarMasses, autoExposure ? frameEv : NAN); };

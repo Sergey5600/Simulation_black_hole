@@ -8,6 +8,7 @@ layout(location = 2) out vec4 layerDisk;
 layout(location = 3) out vec4 layerParticles;
 layout(location = 4) out vec4 layerEvents;
 layout(location = 5) out vec4 layerPeach;
+layout(location = 6) out vec4 layerSingularity;
 
 uniform mat4 uInvViewProj;
 uniform mat4 uViewProj;
@@ -33,4 +34,5 @@ void main() {
     layerParticles = vec4(0.0);
     layerEvents = vec4(0.0);
     layerPeach = vec4(0.0);
+    layerSingularity = vec4(0.0);
 }

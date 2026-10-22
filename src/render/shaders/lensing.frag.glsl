@@ -18,6 +18,7 @@ layout(location = 2) out vec4 layerDisk;      // the thin disk
 layout(location = 3) out vec4 layerParticles; // the lensed particle volume (additive)
 layout(location = 4) out vec4 layerEvents;    // story: supernovae, kilonova, galaxies (events.glsl)
 layout(location = 5) out vec4 layerPeach;     // story: the peach (peach.glsl)
+layout(location = 6) out vec4 layerSingularity; // story finale, artistic (events.glsl)
 
 uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
@@ -192,11 +193,11 @@ vec3 kerrDiskEmission(vec3 X, float lz, float a) {
 
 // Light reaching the camera along one ray, by source.
 struct Light {
-    vec3 sky, disk, particles, events, peach;  // particles: unshifted (see particleShift)
+    vec3 sky, disk, particles, events, peach, singularity;  // particles: unshifted (see particleShift)
     float skyCover, diskCover, peachCover;
 };
 
-Light noLight() { return Light(vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, 0.0, 0.0); }
+Light noLight() { return Light(vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, 0.0, 0.0); }
 
 void emit(Light L) {
     vec3 particles = particleShift(L.particles, gCamera);
@@ -205,7 +206,8 @@ void emit(Light L) {
     layerParticles = vec4(particles, 0.0);
     layerEvents = vec4(L.events, 0.0);
     layerPeach = vec4(L.peach, L.peachCover);
-    fragColor = vec4(L.sky + L.disk + particles + L.events + L.peach, 1.0);
+    layerSingularity = vec4(L.singularity, 0.0);
+    fragColor = vec4(L.sky + L.disk + particles + L.events + L.peach + L.singularity, 1.0);
 }
 
 // The sky (and the story's events in it) in escape direction `dir`.
@@ -273,6 +275,7 @@ void main() {
         emit(L);
         return;
     }
+    L.singularity = singularityLight(dir, normalize(uCameraPos));
     if (!uLensing) {
         escape(L, dir);
         emit(L);

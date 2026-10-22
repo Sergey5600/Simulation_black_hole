@@ -144,6 +144,7 @@ void buildPeach(float startRadius, double solarMasses, std::vector<JourneyFrame>
   const Vec3 kBeside{0.12f, 0.55f, -0.05f};        // where the ship finally holds the peach (m)
   constexpr double kMoveStart = 0.78, kMoveEnd = 0.86;
   constexpr double kHoverGaze = kPi - 0.3;
+  constexpr double kFinale = 0.94;
   const fall::Units units(solarMasses);
   const double tidalUnit = units.accel / units.length;  // s⁻² per (M/r³ = 1)
   const double energy = fall::energyFromRest(kHover);
@@ -256,6 +257,7 @@ void buildPeach(float startRadius, double solarMasses, std::vector<JourneyFrame>
       const double tracked = track < 0.0 ? track + 2.0 * kPi : track;
       f.gaze = static_cast<float>(kHoverGaze + (tracked - kHoverGaze) * smoothstep(kHoverEnd, kHoverEnd + 0.06, u));
       f.roll = static_cast<float>(smoothstep(kMoveStart, kMoveEnd, u));
+      f.singularity = static_cast<float>(std::clamp((u - kFinale) / (1.0 - kFinale), 0.0, 1.0));
     }
     f.r = static_cast<float>(r);
     out.push_back(f);
@@ -299,6 +301,7 @@ JourneyFrame Journey::at(float u) const {
   f.peachSqueeze = a.peachSqueeze + (b.peachSqueeze - a.peachSqueeze) * t;
   f.peachSpin = a.peachSpin + (b.peachSpin - a.peachSpin) * t;
   f.roll = a.roll + (b.roll - a.roll) * t;
+  f.singularity = a.singularity + (b.singularity - a.singularity) * t;
   return f;
 }
 

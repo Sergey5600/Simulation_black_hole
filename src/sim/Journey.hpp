@@ -25,6 +25,7 @@ struct JourneyFrame {
   float peachSqueeze = 1.0f;   // transverse compression
   float peachSpin = 0.0f;      // slow tumble (rad)
   bool tornApart = false;      // tidal stress beyond the strength of peach flesh
+  float singularity = 0.0f;    // artistic finale as r -> 0, 0..1 (the end of proper time)
 };
 
 // Built-in journeys, sampled densely in u in [0, 1] and interpolated:

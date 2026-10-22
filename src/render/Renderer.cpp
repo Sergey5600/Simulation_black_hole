@@ -555,7 +555,8 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   const glm::mat4 viewProj = in.projection * in.view;
   const bool layers = layerTextures_[0] != 0;
   static const GLenum kAllBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2,
-                                       GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5};
+                                       GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5,
+                                       GL_COLOR_ATTACHMENT6};
   static_assert(sizeof(kAllBuffers) / sizeof(GLenum) == kLayerCount + 1);
   const GLenum mainBuffer = GL_COLOR_ATTACHMENT0;
 
@@ -637,6 +638,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uStory", story.on);
   backgroundProgram_.set("uCosmicTime", story.cosmicTime);
   backgroundProgram_.set("uStoryFrame", story.frame);
+  backgroundProgram_.set("uSingularity", story.singularity);
   backgroundProgram_.set("uPeachOn", false);
   if (story.peach) {
     peachLightProbe(in, settings);

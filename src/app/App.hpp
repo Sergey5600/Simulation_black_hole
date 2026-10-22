@@ -48,6 +48,7 @@ struct AppOptions {
   std::string cameraPath = "flyby";  // a CameraPath or a first-person Journey
   std::string frameFormat;         // jpg or png (empty = preset)
   bool hud = false;                // physical readout on journey frames
+  bool singularity = true;         // the story's artistic finale (--no-singularity)
   int autoExposure = -1;           // -1: on for first-person journeys only; 0 off; 1 on
   std::string layers;              // comma list of compositing layers to write (see --layers)
   std::string layerFormat = "exr"; // exr (linear) or png (tone-mapped)
