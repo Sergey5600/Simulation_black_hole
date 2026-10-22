@@ -6,6 +6,8 @@ layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 layerSky;
 layout(location = 2) out vec4 layerDisk;
 layout(location = 3) out vec4 layerParticles;
+layout(location = 4) out vec4 layerEvents;
+layout(location = 5) out vec4 layerPeach;
 
 uniform mat4 uInvViewProj;
 uniform mat4 uViewProj;
@@ -29,4 +31,6 @@ void main() {
     layerSky = vec4(0.0);
     layerDisk = vec4(0.0);
     layerParticles = vec4(0.0);
+    layerEvents = vec4(0.0);
+    layerPeach = vec4(0.0);
 }

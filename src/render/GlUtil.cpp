@@ -98,6 +98,12 @@ void Program::set(const char* name, float v) { glUniform1f(location(name), v); }
 void Program::set(const char* name, const glm::vec2& v) { glUniform2fv(location(name), 1, glm::value_ptr(v)); }
 void Program::set(const char* name, const glm::vec3& v) { glUniform3fv(location(name), 1, glm::value_ptr(v)); }
 void Program::set(const char* name, const glm::vec4& v) { glUniform4fv(location(name), 1, glm::value_ptr(v)); }
+void Program::set(const char* name, const glm::mat3& m) {
+  glUniformMatrix3fv(location(name), 1, GL_FALSE, glm::value_ptr(m));
+}
+void Program::set(const char* name, const glm::vec3* values, int count) {
+  glUniform3fv(location(name), count, glm::value_ptr(values[0]));
+}
 void Program::set(const char* name, const glm::mat4& m) {
   glUniformMatrix4fv(location(name), 1, GL_FALSE, glm::value_ptr(m));
 }

@@ -440,6 +440,21 @@ void drawJourneyHud(const JourneyFrame& f, double solarMasses, float exposureEv)
     const double left = fall::properTimeToSingularity(r, energy) * units.time;
     row("singularity", f.hovering ? formatDuration(left) + " away if the engines stop" : "in " + formatDuration(left));
 
+    if (f.cosmicTime >= 0.0f) {
+      std::snprintf(line, sizeof(line), "+%.0f billion years  (story time-lapse, not physics)", 100.0 * f.cosmicTime);
+      row("universe", line);
+    }
+    if (f.peach) {
+      if (f.tornApart) {
+        std::snprintf(line, sizeof(line), "torn by tides: stretched \xC3\x97%.1f, squeezed \xC3\x97%.2f", f.peachStretch,
+                      f.peachSqueeze);
+        row("peach", line);
+      } else {
+        const double tides = fall::tidalStretch(r) * units.accel / units.length * 0.076 * 0.076 * 1000.0 / 4.0;
+        std::snprintf(line, sizeof(line), "intact, tidal stress %.3g Pa of ~100 kPa", tides);
+        row("peach", line);
+      }
+    }
     if (!std::isnan(exposureEv)) {
       std::snprintf(line, sizeof(line), "%+.1f EV (auto, like a video camera)", exposureEv);
       row("exposure", line);

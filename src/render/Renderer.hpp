@@ -13,7 +13,7 @@ namespace bh {
 // Light sources that can also be rendered into separate images for compositing
 // (RenderSettings::captureLayers, Renderer::layerTexture). Linear HDR before
 // exposure and bloom; alpha = coverage. They add up to the full image.
-enum class Layer { Sky, Disk, Particles, Count };
+enum class Layer { Sky, Disk, Particles, Events, Peach, Count };
 constexpr int kLayerCount = static_cast<int>(Layer::Count);
 
 // Global look of the frame (independent of the scenario).
@@ -77,6 +77,19 @@ struct FrameInput {
   // (1 = from rest at infinity), which also works inside the horizon.
   bool falling = false;
   float fallEnergy = 1.0f;
+
+  // The "peach" story (lensing only): events in the outside universe and a
+  // peach floating next to the camera (see events.glsl, peach.glsl).
+  struct Story {
+    bool on = false;
+    float cosmicTime = 0.0f;             // outside events clock, 1 = the release
+    glm::mat3 frame{1.0f};               // columns: radial out, side, up (world)
+    bool peach = false;
+    glm::vec3 peachCenter{0.0f};         // meters from the camera, world-aligned axes
+    glm::mat3 peachBasis{1.0f};          // body axes: x, y = stem, z = suture side
+    glm::vec3 stretchAxis{1.0f, 0.0f, 0.0f};
+    float stretch = 1.0f, squeeze = 1.0f;
+  } story;
 };
 
 // HDR point renderer: stars -> horizon -> guides -> additive particle splats
@@ -128,6 +141,9 @@ class Renderer {
   void buildSky();
   void renderBloom(const RenderSettings& settings);
   void setShadingUniforms(gl::Program& program, const FrameInput& in);
+  // Lights the peach: traces a small cube of rays around the camera (the lensed,
+  // shifted environment, peach left out) and projects it onto spherical harmonics.
+  void peachLightProbe(const FrameInput& in, const RenderSettings& settings);
   bool splatParticles(const FrameInput& in, const RenderSettings& settings);
 
   gl::Program pointsProgram_, starsProgram_, horizonProgram_, linesProgram_;
@@ -157,6 +173,7 @@ class Renderer {
   gl::RenderTarget hdr_;
   std::array<GLuint, kLayerCount> layerTextures_{};  // extra color attachments of hdr_ (0 = none)
   gl::RenderTarget meter_;
+  gl::RenderTarget probe_;  // 6 cube faces side by side, for peachLightProbe
   // Enough levels that the smallest is ~16 px tall, so the glow has the same
   // relative size at 1080p and at 8K.
   std::vector<gl::RenderTarget> bloomMips_;

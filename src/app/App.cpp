@@ -325,7 +325,8 @@ struct LayerOutput {
 bool parseLayers(const std::string& list, std::vector<LayerOutput>& out) {
   static const std::pair<const char*, int> kNames[] = {
       {"beauty", kLayerBeauty}, {"sky", static_cast<int>(Layer::Sky)}, {"disk", static_cast<int>(Layer::Disk)},
-      {"particles", static_cast<int>(Layer::Particles)}, {"hud", kLayerHud}};
+      {"particles", static_cast<int>(Layer::Particles)}, {"events", static_cast<int>(Layer::Events)},
+      {"peach", static_cast<int>(Layer::Peach)}, {"hud", kLayerHud}};
   std::string rest = list;
   while (!rest.empty()) {
     const size_t comma = rest.find(',');
@@ -342,7 +343,8 @@ bool parseLayers(const std::string& list, std::vector<LayerOutput>& out) {
       found = true;
     }
     if (!found) {
-      std::fprintf(stderr, "Unknown layer '%s' (beauty, sky, disk, particles, hud or all)\n", name.c_str());
+      std::fprintf(stderr, "Unknown layer '%s' (beauty, sky, disk, particles, events, peach, hud or all)\n",
+                   name.c_str());
       return false;
     }
   }
@@ -392,14 +394,34 @@ void App::setJourneyCamera(FrameInput& in, const ViewPreset& base, const Journey
   const glm::vec3 side = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), radial));
   const glm::vec3 up = glm::normalize(glm::cross(radial, side));  // perpendicular to every gaze
   const glm::vec3 forward = glm::normalize(-radial * std::cos(f.gaze) + side * std::sin(f.gaze));
+  glm::vec3 cameraUp = up;
+  if (f.roll > 0.0f && std::fabs(glm::dot(forward, radial)) < 0.95f)  // roll so "outward" points up
+    cameraUp = glm::normalize(glm::mix(up, glm::normalize(radial - forward * glm::dot(forward, radial)), f.roll));
   const float fov = glm::radians(75.0f);
   const float aspect = static_cast<float>(in.width) / static_cast<float>(in.height);
-  in.view = glm::lookAt(pos, pos + forward, up);
+  in.view = glm::lookAt(pos, pos + forward, cameraUp);
   in.projection = glm::perspective(fov, aspect, 0.01f, 5000.0f);  // sub-pixel jitter is added afterwards
   in.cameraPos = pos;
   in.fovYRadians = fov;
   in.falling = !f.hovering;
   in.fallEnergy = f.energy;
+
+  if (f.cosmicTime >= 0.0f) {
+    in.story.on = true;
+    in.story.cosmicTime = f.cosmicTime;
+    in.story.frame = glm::mat3(radial, side, up);
+  }
+  if (f.peach) {
+    in.story.peach = true;
+    in.story.peachCenter = radial * f.peachOffset.x + side * f.peachOffset.y + up * f.peachOffset.z;
+    // Stem up, suture facing out, tumbling slowly about a skewed axis.
+    const glm::mat3 rest(side, up, radial);
+    const glm::mat3 tumble(glm::rotate(glm::mat4(1.0f), f.peachSpin, glm::normalize(glm::vec3(0.35f, 1.0f, 0.25f))));
+    in.story.peachBasis = rest * tumble;
+    in.story.stretchAxis = radial;
+    in.story.stretch = f.peachStretch;
+    in.story.squeeze = f.peachSqueeze;
+  }
 }
 
 int App::record() {
@@ -409,7 +431,7 @@ int App::record() {
   if (!std::isnan(options_.pitch)) base.pitch = options_.pitch;
   if (!std::isnan(options_.distance)) base.distance = options_.distance;
   Journey journey;
-  const bool firstPerson = Journey::named(options_.cameraPath, base.distance, journey);
+  const bool firstPerson = Journey::named(options_.cameraPath, base.distance, journey, options_.solarMasses);
   if (!firstPerson && !CameraPath::named(options_.cameraPath, base, path)) {
     std::fprintf(stderr, "Unknown camera path '%s' (available: %s, %s)\n", options_.cameraPath.c_str(),
                  CameraPath::names(), Journey::names());

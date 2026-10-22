@@ -64,4 +64,14 @@ peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
 print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path hover --hud':<28} peak {peak:3d}")
 sys.exit(0 if peak > 60 else 1)
 PY
+# The peach story: events in the sky and the peach, as layers too.
+eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --record $OUT/peach --path peach --layers events,peach --record-size 240x136 --duration 1 --fps 6 --quality draft" > "$OUT/peach.log" 2>&1
+python3 -I - "$OUT/peach/frame_00000.jpg" <<'PY'
+import sys
+from PIL import Image
+peak = Image.open(sys.argv[1]).convert("L").getextrema()[1]
+print(f"{'ok  ' if peak > 60 else 'FAIL'} {'record --path peach':<28} peak {peak:3d}")
+sys.exit(0 if peak > 60 else 1)
+PY
+[ -s "$OUT/peach/peach/frame_00003.exr" ] && [ -s "$OUT/peach/events/frame_00003.exr" ] || { cat "$OUT/peach.log"; echo "FAIL peach layers missing"; exit 1; }
 echo "all smoke renders passed ($OUT)"

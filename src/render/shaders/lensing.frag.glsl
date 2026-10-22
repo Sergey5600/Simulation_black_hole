@@ -16,6 +16,8 @@ layout(location = 0) out vec4 fragColor;      // everything
 layout(location = 1) out vec4 layerSky;       // stars and Milky Way
 layout(location = 2) out vec4 layerDisk;      // the thin disk
 layout(location = 3) out vec4 layerParticles; // the lensed particle volume (additive)
+layout(location = 4) out vec4 layerEvents;    // story: supernovae, kilonova, galaxies (events.glsl)
+layout(location = 5) out vec4 layerPeach;     // story: the peach (peach.glsl)
 
 uniform mat4 uInvViewProj;
 uniform vec3 uCameraPos;
@@ -62,7 +64,8 @@ float gCamera = 1.0;
 // so a blueshifted red giant turns white and a hot star blue-violet.
 vec3 skyLight(vec3 dir, float g) {
     vec4 texel = textureLod(uSky, dir, 0.0);
-    vec3 c = texel.rgb * uSkyBrightness;
+    vec3 c = texel.rgb * (uSkyBrightness * cosmicDimming());
+    g *= cosmicRedshift();
     float lum = dot(texel.rgb, kLuma);
     if (lum <= 0.0) return vec3(0.0);
     return shiftBlackbody(c, clamp(texel.a / lum * 1e4, 1000.0, 40000.0), g);
@@ -189,18 +192,27 @@ vec3 kerrDiskEmission(vec3 X, float lz, float a) {
 
 // Light reaching the camera along one ray, by source.
 struct Light {
-    vec3 sky, disk, particles;  // particles: unshifted (see particleShift)
-    float skyCover, diskCover;
+    vec3 sky, disk, particles, events, peach;  // particles: unshifted (see particleShift)
+    float skyCover, diskCover, peachCover;
 };
 
-Light noLight() { return Light(vec3(0.0), vec3(0.0), vec3(0.0), 0.0, 0.0); }
+Light noLight() { return Light(vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), 0.0, 0.0, 0.0); }
 
 void emit(Light L) {
     vec3 particles = particleShift(L.particles, gCamera);
     layerSky = vec4(L.sky, L.skyCover);
     layerDisk = vec4(L.disk, L.diskCover);
     layerParticles = vec4(particles, 0.0);
-    fragColor = vec4(L.sky + L.disk + particles, 1.0);
+    layerEvents = vec4(L.events, 0.0);
+    layerPeach = vec4(L.peach, L.peachCover);
+    fragColor = vec4(L.sky + L.disk + particles + L.events + L.peach, 1.0);
+}
+
+// The sky (and the story's events in it) in escape direction `dir`.
+void escape(inout Light L, vec3 dir) {
+    L.sky = skyLight(dir, gCamera);
+    L.events = skyEvents(dir, gCamera);
+    L.skyCover = 1.0;
 }
 
 // Tracing light backwards in time near a rotating hole: Kerr is symmetric under
@@ -244,8 +256,7 @@ Light traceKerr(vec3 dir) {
         }
         vec3 step = X - X0;
         if (r > escapeRadius && dot(X, step) > 0.0) {
-            L.sky = skyLight(fromKS(normalize(step)), gCamera);
-            L.skyCover = 1.0;
+            escape(L, fromKS(normalize(step)));
             return L;
         }
     }
@@ -256,9 +267,14 @@ void main() {
     vec4 farPoint = uInvViewProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
     vec3 dir = normalize(farPoint.xyz / farPoint.w - uCameraPos);
     Light L = noLight();
+    // The story's peach floats a few decimeters away, in front of everything.
+    if (tracePeach(dir, L.peach)) {
+        L.peachCover = 1.0;
+        emit(L);
+        return;
+    }
     if (!uLensing) {
-        L.sky = skyLight(dir, 1.0);
-        L.skyCover = 1.0;
+        escape(L, dir);
         emit(L);
         return;
     }
@@ -309,10 +325,9 @@ void main() {
         // Captured: inside the horizon and still heading inwards (backwards in time).
         // A camera inside the horizon traces outwards first, so it is not cut off.
         if (r < 2.0005 && dot(x, v) < 0.0) break;
-        if (r < 0.05) break;
+        if (r < 0.05 && r < 0.5 * rCam) break;  // into the singularity (a deep camera starts below 0.05)
         if (r > escapeRadius && dot(x, v) > 0.0) {
-            L.sky = skyLight(normalize(v), gCamera);
-            L.skyCover = 1.0;
+            escape(L, normalize(v));
             break;
         }
 

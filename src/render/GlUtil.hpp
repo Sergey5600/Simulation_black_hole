@@ -31,7 +31,9 @@ class Program {
   void set(const char* name, const glm::vec2& v);
   void set(const char* name, const glm::vec3& v);
   void set(const char* name, const glm::vec4& v);
+  void set(const char* name, const glm::mat3& m);
   void set(const char* name, const glm::mat4& m);
+  void set(const char* name, const glm::vec3* values, int count);
 
  private:
   GLint location(const char* name);

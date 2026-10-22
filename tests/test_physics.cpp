@@ -424,6 +424,31 @@ void testJourney() {
     monotonic = monotonic && q.properTime >= p.properTime && q.outsideTime >= p.outsideTime && q.r <= p.r + 1e-6f;
   }
   check(monotonic, "journey: clocks run forward and r never grows", 1.0, 1.0);
+
+  // The peach story: tides tear a 7.6 cm peach (flesh ~1000 kg/m³, ~0.1 MPa)
+  // once 2GM/R³ > 4σ/(ρℓ²). Near r = 0 (r ∝ δτ^2/3) the deviation equations
+  // have power-law solutions; starting from rest at r_t they give
+  // stretch = 4/5 (r_t/r)^1/2 + 1/5 (r/r_t)², squeeze = 2 (r/r_t)^1/2 - r/r_t.
+  check(Journey::named("peach", 40.0f, j, 4.3e6), "journey: peach exists", 1.0, 1.0);
+  const fall::Units units(4.3e6);
+  const double tearRate = 4.0 * 1e5 / (1000.0 * 0.076 * 0.076);
+  const double tearRadius = std::cbrt(2.0 * units.accel / units.length / tearRate);
+  double firstTorn = 0.0;
+  for (int i = 0; i <= 4000 && firstTorn == 0.0; ++i) {
+    const JourneyFrame f = j.at(i / 4000.0f);
+    if (f.tornApart) firstTorn = f.r;
+  }
+  checkNear("journey: the peach tears where the tides beat the strength of its flesh", firstTorn, tearRadius, 0.03);
+  const JourneyFrame last = j.at(1.0f);
+  const double x = last.r / firstTorn;
+  checkNear("journey: torn peach stretches as 4/5 (r_t/r)^1/2 + 1/5 (r/r_t)^2", last.peachStretch,
+            0.8 / std::sqrt(x) + 0.2 * x * x, 0.01);
+  checkNear("journey: and is squeezed as 2 (r/r_t)^1/2 - r/r_t", last.peachSqueeze, 2.0 * std::sqrt(x) - x, 0.01);
+  const JourneyFrame hover = j.at(0.5f);
+  check(hover.hovering && std::fabs(length(hover.peachOffset) - 0.47f) < 0.02f && hover.cosmicTime > 0.2f &&
+            hover.cosmicTime < 1.0f,
+        "journey: while hovering the peach is held at the lens and the outside clock runs", length(hover.peachOffset), 0.47);
+  checkNear("journey: the story clock reaches 1 at the release", j.at(0.58f).cosmicTime, 1.0, 1e-3);
 }
 
 }  // namespace

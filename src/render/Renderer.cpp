@@ -38,7 +38,7 @@ bool Renderer::init() {
   ok &= compositeProgram_.build("composite", {fullscreen_vert}, {composite_frag});
   ok &= stripProgram_.build("colormap_strip", {fullscreen_vert}, {common, colormap_strip_frag});
   ok &= skyGenProgram_.build("sky_gen", {fullscreen_vert}, {common, sky_gen_frag});
-  ok &= backgroundProgram_.build("lensing", {fullscreen_vert}, {common, lensing_frag});
+  ok &= backgroundProgram_.build("lensing", {fullscreen_vert}, {common, events, peach, lensing_frag});
   ok &= splatProgram_.buildCompute("splat", {common, particle_shading, splat_comp});
   ok &= volumeResolveProgram_.buildCompute("volume_resolve", {volume_resolve_comp});
   ok &= accumulateProgram_.build("accumulate", {fullscreen_vert}, {accumulate_frag});
@@ -69,6 +69,7 @@ void Renderer::shutdown() {
   hdr_.destroy();
   glDeleteTextures(kLayerCount, layerTextures_.data());
   meter_.destroy();
+  probe_.destroy();
   for (auto& m : bloomMips_) m.destroy();
   glDeleteTextures(static_cast<GLsizei>(colormapStrips_.size()), colormapStrips_.data());
   glDeleteTextures(1, &skyCubemap_);
@@ -408,6 +409,56 @@ void Renderer::downsample(GLuint srcTexture, int factor, const gl::RenderTarget&
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+void Renderer::peachLightProbe(const FrameInput& in, const RenderSettings& settings) {
+  constexpr int kFace = 32;
+  if (probe_.width != 6 * kFace) probe_.create(6 * kFace, kFace, GL_RGBA32F, false);
+  glBindFramebuffer(GL_FRAMEBUFFER, probe_.fbo);
+  const glm::vec3 targets[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  const glm::vec3 ups[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+  const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+  glm::mat4 inverse[6];
+  backgroundProgram_.set("uPeachOn", false);
+  backgroundProgram_.set("uMaxSteps", std::min(settings.rayMaxSteps, 2000));
+  for (int face = 0; face < 6; ++face) {
+    inverse[face] = glm::inverse(proj * glm::lookAt(in.cameraPos, in.cameraPos + targets[face], ups[face]));
+    backgroundProgram_.set("uInvViewProj", inverse[face]);
+    glViewport(face * kFace, 0, kFace, kFace);
+    glBindVertexArray(emptyVao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+  }
+  backgroundProgram_.set("uMaxSteps", settings.rayMaxSteps);
+  std::vector<float> pixels(static_cast<size_t>(6 * kFace * kFace) * 4);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, probe_.fbo);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glReadPixels(0, 0, 6 * kFace, kFace, GL_RGBA, GL_FLOAT, pixels.data());
+
+  // Project radiance onto the 9 real spherical harmonics, then convolve with the
+  // clamped cosine (Ramamoorthi & Hanrahan 2001): irradiance / π per basis term.
+  glm::vec3 sh[9] = {};
+  for (int face = 0; face < 6; ++face) {
+    for (int y = 0; y < kFace; ++y) {
+      for (int x = 0; x < kFace; ++x) {
+        const float nx = (static_cast<float>(x) + 0.5f) / kFace * 2.0f - 1.0f;
+        const float ny = (static_cast<float>(y) + 0.5f) / kFace * 2.0f - 1.0f;
+        const glm::vec4 far = inverse[face] * glm::vec4(nx, ny, 1.0f, 1.0f);
+        const glm::vec3 d = glm::normalize(glm::vec3(far) / far.w - in.cameraPos);
+        const float solidAngle = (4.0f / (kFace * kFace)) / std::pow(1.0f + nx * nx + ny * ny, 1.5f);
+        const size_t i = (static_cast<size_t>(y) * 6 * kFace + static_cast<size_t>(face * kFace + x)) * 4;
+        const glm::vec3 radiance = glm::vec3(pixels[i], pixels[i + 1], pixels[i + 2]) * solidAngle;
+        const float basis[9] = {0.282095f,          0.488603f * d.y,       0.488603f * d.z,
+                                0.488603f * d.x,    1.092548f * d.x * d.y, 1.092548f * d.y * d.z,
+                                0.315392f * (3.0f * d.z * d.z - 1.0f), 1.092548f * d.x * d.z,
+                                0.546274f * (d.x * d.x - d.y * d.y)};
+        for (int k = 0; k < 9; ++k) sh[k] += radiance * basis[k];
+      }
+    }
+  }
+  const float band[9] = {1.0f, 2.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+  const float norm[9] = {0.282095f, 0.488603f, 0.488603f, 0.488603f, 1.092548f, 1.092548f, 0.315392f, 1.092548f, 0.546274f};
+  for (int k = 0; k < 9; ++k) sh[k] *= band[k] * norm[k];
+  backgroundProgram_.set("uPeachSH", sh, 9);
+}
+
 float Renderer::meterLuminance(float quantile) {
   if (hdr_.width == 0) return 0.0f;
   const int factor = std::max(1, hdr_.width / 64);
@@ -504,7 +555,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   const glm::mat4 viewProj = in.projection * in.view;
   const bool layers = layerTextures_[0] != 0;
   static const GLenum kAllBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2,
-                                       GL_COLOR_ATTACHMENT3};
+                                       GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5};
   static_assert(sizeof(kAllBuffers) / sizeof(GLenum) == kLayerCount + 1);
   const GLenum mainBuffer = GL_COLOR_ATTACHMENT0;
 
@@ -582,6 +633,26 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings, GLui
   backgroundProgram_.set("uTime", in.time);
   backgroundProgram_.set("uMaxSteps", settings.rayMaxSteps);
   backgroundProgram_.set("uStepScale", settings.rayStepScale);
+  const FrameInput::Story& story = in.story;
+  backgroundProgram_.set("uStory", story.on);
+  backgroundProgram_.set("uCosmicTime", story.cosmicTime);
+  backgroundProgram_.set("uStoryFrame", story.frame);
+  backgroundProgram_.set("uPeachOn", false);
+  if (story.peach) {
+    peachLightProbe(in, settings);
+    backgroundProgram_.set("uPeachOn", true);
+    backgroundProgram_.set("uPeachCenter", story.peachCenter);
+    backgroundProgram_.set("uPeachBasis", story.peachBasis);
+    backgroundProgram_.set("uStretchAxis", story.stretchAxis);
+    backgroundProgram_.set("uPeachScale", glm::vec2(story.stretch, story.squeeze));
+    // Near the horizon all light comes from overhead, so whatever the camera looks
+    // up at is backlit. A warm fill light on the camera, which the operator keeps
+    // at the same on-screen strength (it follows the exposure; not physics).
+    backgroundProgram_.set("uPeachLamp", glm::vec3(1.0f, 0.92f, 0.82f) * (0.12f / std::max(settings.exposure, 1e-4f)));
+    glBindFramebuffer(GL_FRAMEBUFFER, hdr_.fbo);
+    glViewport(0, 0, in.width, in.height);
+  }
+  backgroundProgram_.set("uInvViewProj", glm::inverse(viewProj));
   glBindVertexArray(emptyVao_);
   if (settings.lensing && settings.rayTileSize > 0) {
     glEnable(GL_SCISSOR_TEST);
