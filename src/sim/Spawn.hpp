@@ -116,9 +116,13 @@ BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, 
   float speed = vc * (1.0f + d.eccentricity * rng.gaussian());
   if (rng.uniform() < d.plungeFraction) speed = vc * rng.uniform(0.55f, 0.9f);
 
-  p.x = radial * r + up * (r * d.thickness * rng.gaussian());
-  p.v = tangent * speed + radial * (vc * d.eccentricity * 0.5f * rng.gaussian()) +
-        up * (vc * d.thickness * rng.gaussian());
+  // One random draw per statement: the evaluation order of operands inside a
+  // single expression is unspecified, and MSVC and nvcc do pick different orders.
+  const float height = rng.gaussian();
+  const float radialKick = rng.gaussian();
+  const float verticalKick = rng.gaussian();
+  p.x = radial * r + up * (r * d.thickness * height);
+  p.v = tangent * speed + radial * (vc * d.eccentricity * 0.5f * radialKick) + up * (vc * d.thickness * verticalKick);
   p.age = 0.0f;
   p.flags = kAlive;
   // Clumpy brightness: spiral pattern times per-particle grain.
