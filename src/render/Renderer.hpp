@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <vector>
 
 #include "render/GlUtil.hpp"
 #include "sim/Appearance.hpp"
@@ -116,8 +117,9 @@ class Renderer {
   LineRange horizonRing_, photonRing_, iscoRing_, grid_;
 
   gl::RenderTarget hdr_;
-  static constexpr int kBloomLevels = 6;
-  std::array<gl::RenderTarget, kBloomLevels> bloomMips_;
+  // Enough levels that the smallest is ~16 px tall, so the glow has the same
+  // relative size at 1080p and at 8K.
+  std::vector<gl::RenderTarget> bloomMips_;
 
   std::array<GLuint, static_cast<size_t>(Colormap::Count)> colormapStrips_{};
 };

@@ -206,7 +206,7 @@ void Renderer::buildColormapStrips() {
 // Bakes the sky (Milky Way band + the star points) into a cube map once, so the
 // lensing shader can look up any escaped ray direction.
 void Renderer::buildSky() {
-  constexpr int kFace = 1024;
+  constexpr int kFace = 2048;  // sharp stars even when the lens magnifies them in 4K
   glGenTextures(1, &skyCubemap_);
   glBindTexture(GL_TEXTURE_CUBE_MAP, skyCubemap_);
   glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, GL_RGBA16F, kFace, kFace);
@@ -244,7 +244,7 @@ void Renderer::buildSky() {
     starsProgram_.use();
     starsProgram_.set("uViewRotation", view);
     starsProgram_.set("uProj", proj);
-    starsProgram_.set("uScale", 1.2f);
+    starsProgram_.set("uScale", 1.2f * static_cast<float>(kFace) / 1024.0f);  // same angular size
     glBindVertexArray(starsVao_);
     glDrawArrays(GL_POINTS, 0, starCount_);
   }
@@ -256,11 +256,13 @@ void Renderer::buildSky() {
 void Renderer::ensureTargets(int width, int height) {
   if (hdr_.width == width && hdr_.height == height) return;
   hdr_.create(width, height, GL_RGBA16F, true);
+  for (auto& mip : bloomMips_) mip.destroy();
+  bloomMips_.clear();
   int w = width, h = height;
-  for (auto& mip : bloomMips_) {
+  while (bloomMips_.size() < 10 && (bloomMips_.size() < 4 || std::min(w, h) / 2 >= 16)) {
     w = std::max(1, w / 2);
     h = std::max(1, h / 2);
-    mip.create(w, h, GL_R11F_G11F_B10F, false);
+    bloomMips_.emplace_back().create(w, h, GL_R11F_G11F_B10F, false);
   }
 }
 
@@ -275,7 +277,8 @@ void Renderer::renderBloom(const RenderSettings& settings) {
   bloomDownProgram_.set("uSource", 0);
   GLuint source = hdr_.color;
   int sw = hdr_.width, sh = hdr_.height;
-  for (int i = 0; i < kBloomLevels; ++i) {
+  const int levels = static_cast<int>(bloomMips_.size());
+  for (int i = 0; i < levels; ++i) {
     const gl::RenderTarget& dst = bloomMips_[static_cast<size_t>(i)];
     glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
     glViewport(0, 0, dst.width, dst.height);
@@ -293,7 +296,7 @@ void Renderer::renderBloom(const RenderSettings& settings) {
   glBlendFunc(GL_ONE, GL_ONE);
   bloomUpProgram_.use();
   bloomUpProgram_.set("uSource", 0);
-  for (int i = kBloomLevels - 1; i > 0; --i) {
+  for (int i = levels - 1; i > 0; --i) {
     const gl::RenderTarget& src = bloomMips_[static_cast<size_t>(i)];
     const gl::RenderTarget& dst = bloomMips_[static_cast<size_t>(i - 1)];
     glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
