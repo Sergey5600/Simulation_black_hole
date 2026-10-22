@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "backend/CpuBackend.hpp"
+#include "io/VdbWriter.hpp"
 #ifdef BH_HAS_CUDA
 #include "backend/CudaBackend.hpp"
 #endif
@@ -185,6 +186,7 @@ void App::applyActions(const ui::UiActions& a) {
   if (a.resetView) camera_.setView(sim_->current().defaults().view, false);
   if (a.resetAppearance) appearance() = sim_->current().defaults().appearance;
   if (a.screenshot) cleanScreenshotPending_ = true;
+  if (a.exportVdb) vdbPending_ = true;
   if (a.selectBackend >= 0) selectBackend(a.selectBackend == 1);
 }
 
@@ -224,6 +226,7 @@ void App::onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int /
     case GLFW_KEY_R: app.resetSimulation(); break;
     case GLFW_KEY_H: app.uiState_.showPanel = !app.uiState_.showPanel; break;
     case GLFW_KEY_P: app.cleanScreenshotPending_ = true; break;
+    case GLFW_KEY_V: app.vdbPending_ = true; break;
     case GLFW_KEY_F: app.camera_.autoRotate = !app.camera_.autoRotate; break;
     case GLFW_KEY_L: app.render_.lensing = !app.render_.lensing; break;
     case GLFW_KEY_1: app.selectScenario(0); break;
@@ -249,6 +252,43 @@ void App::drawOverlay(const gl::RenderTarget& target, const std::function<void()
   ImGui::Render();
   glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+// The particle volume in rest-frame colors (no Doppler: it must not depend on
+// the camera), turned to Blender's z-up axes: world (x, y, z) -> (x, -z, y).
+bool App::exportVdb(const std::string& path, FrameInput in, const RenderSettings& settings) {
+  in.appearance.dopplerBeaming = false;
+  in.appearance.colorShift = false;
+  std::vector<float> rgba;
+  int n = 0;
+  float extent = 0.0f;
+  if (!renderer_.readParticleVolume(in, settings, rgba, n, extent)) {
+    std::fprintf(stderr, "VDB export: no particles to export\n");
+    return false;
+  }
+  const size_t count = static_cast<size_t>(n) * n * n;
+  vdb::Grid density{"density", 1, std::vector<float>(count)};
+  vdb::Grid color{"color", 3, std::vector<float>(count * 3)};
+  for (int k = 0; k < n; ++k) {
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) {
+        const float* src = &rgba[4 * (static_cast<size_t>(i) + static_cast<size_t>(n) * (j + static_cast<size_t>(n) * k))];
+        const size_t dst = (static_cast<size_t>(i) * n + static_cast<size_t>(n - 1 - k)) * n + static_cast<size_t>(j);
+        density.values[dst] = 0.2126f * src[0] + 0.7152f * src[1] + 0.0722f * src[2];
+        std::copy_n(src, 3, &color.values[3 * dst]);
+      }
+    }
+  }
+  vdb::Transform transform;
+  transform.voxelSize = extent / static_cast<float>(n);
+  const double corner = -0.5 * extent + 0.5 * transform.voxelSize;  // center of voxel 0, in M
+  transform.translation = {corner, corner, corner};
+  std::string error;
+  if (!vdb::writeFile(path, {density, color}, {n, n, n}, {0, 0, 0}, transform, &error)) {
+    std::fprintf(stderr, "VDB export failed: %s\n", error.c_str());
+    return false;
+  }
+  return true;
 }
 
 void App::takeScreenshot(const std::string& path, int width, int height) {
@@ -556,7 +596,10 @@ int App::record() {
     char name[64];
     std::snprintf(name, sizeof(name), "frame_%05d.%s", f, format.c_str());
     const std::string file = (std::filesystem::path(options_.recordDir) / name).string();
-    bool done = std::filesystem::exists(file);
+    char vdbName[64];
+    std::snprintf(vdbName, sizeof(vdbName), "frame_%05d.vdb", f);
+    const std::string vdbFile = (std::filesystem::path(options_.recordDir) / "vdb" / vdbName).string();
+    bool done = std::filesystem::exists(file) && (!options_.vdb || std::filesystem::exists(vdbFile));
     for (const LayerOutput& l : layers) done = done && std::filesystem::exists(layerFile(l, f));
     if (done) continue;  // resume
 
@@ -594,6 +637,8 @@ int App::record() {
     const float uFrame = frames > 1 ? static_cast<float>(f) / static_cast<float>(frames - 1) : 0.0f;
     auto drawHud = [&] { ui::drawJourneyHud(journey.at(uFrame), options_.solarMasses, autoExposure ? frameEv : NAN); };
     if (hud) drawOverlay(out, drawHud);
+
+    if (options_.vdb && !exportVdb(vdbFile, makeFrameInput(bigW, bigH), settings)) return 1;
 
     // Layers: linear EXR (scene light x the frame's exposure; alpha = coverage)
     // or tone-mapped PNG; the HUD as a PNG with alpha.
@@ -729,6 +774,11 @@ int App::run() {
 
     // Images without UI: P key / button, or the final frame of a --hide-ui capture.
     const bool lastCaptureFrame = capture && frame + 1 >= options_.frames;
+    if (vdbPending_) {
+      const std::string path = makeTimestampedPath("exports", ".vdb");
+      if (exportVdb(path, makeFrameInput(fbWidth, fbHeight), render_)) std::printf("Saved %s\n", path.c_str());
+      vdbPending_ = false;
+    }
     if (cleanScreenshotPending_ || (lastCaptureFrame && options_.hideUi)) {
       takeScreenshot(capture ? options_.screenshot : makeScreenshotPath(), fbWidth, fbHeight);
       cleanScreenshotPending_ = false;

@@ -39,6 +39,11 @@ if(OpenMP_CXX_FOUND)
   target_link_libraries(bh_sim PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
+# File formats that need no graphics: OpenVDB volumes (zlib via tinyexr's miniz).
+add_library(bh_io STATIC src/io/VdbWriter.cpp)
+target_include_directories(bh_io PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(bh_io PUBLIC tinyexr)
+
 # ---------------------------------------------------------------------------
 # CUDA backend (optional): same BH_HD physics, compiled as GPU kernels.
 # ---------------------------------------------------------------------------
@@ -93,7 +98,7 @@ add_executable(blackhole
 )
 target_include_directories(blackhole PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(blackhole SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
-target_link_libraries(blackhole PRIVATE bh_sim glad glfw glm::glm imgui tinyexr)
+target_link_libraries(blackhole PRIVATE bh_sim bh_io glad glfw glm::glm imgui tinyexr)
 if(BH_HAS_CUDA)
   target_link_libraries(blackhole PRIVATE bh_cuda)
 endif()
@@ -101,19 +106,21 @@ endif()
 if(MSVC)
   # /utf-8: sources contain Greek letters and math symbols in UI strings.
   target_compile_options(bh_sim PRIVATE /W4 /utf-8)
+  target_compile_options(bh_io PRIVATE /W4 /utf-8)
   target_compile_options(blackhole PRIVATE /W4 /utf-8)
   # Standard sscanf/snprintf are fine here; silence MSVC's "_s variant" advice.
   target_compile_definitions(blackhole PRIVATE _CRT_SECURE_NO_WARNINGS)
   set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT blackhole)
 else()
   target_compile_options(bh_sim PRIVATE -Wall -Wextra -O3)
+  target_compile_options(bh_io PRIVATE -Wall -Wextra -O2)
   target_compile_options(blackhole PRIVATE -Wall -Wextra)
 endif()
 
 if(BH_BUILD_TESTS)
   enable_testing()
   add_executable(bh_tests tests/test_physics.cpp)
-  target_link_libraries(bh_tests PRIVATE bh_sim)
+  target_link_libraries(bh_tests PRIVATE bh_sim bh_io)
   add_test(NAME physics COMMAND bh_tests)
   if(BH_HAS_CUDA)
     add_executable(bh_cuda_tests tests/test_cuda.cpp)

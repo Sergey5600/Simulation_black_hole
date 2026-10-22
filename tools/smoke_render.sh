@@ -76,4 +76,8 @@ PY
 for layer in peach events singularity; do
   [ -s "$OUT/peach/$layer/frame_00005.exr" ] || { cat "$OUT/peach.log"; echo "FAIL peach layer $layer missing"; exit 1; }
 done
+# OpenVDB export of the particle volume.
+eval "xvfb-run -a -s \"-screen 0 480x270x24\" $BUILD/blackhole --size 480x270 --scenario 0 --warmup 50 --record $OUT/vdb --record-size 160x90 --duration 0.1 --fps 10 --quality draft --vdb" > "$OUT/vdb.log" 2>&1
+[ -s "$OUT/vdb/vdb/frame_00000.vdb" ] || { cat "$OUT/vdb.log"; echo "FAIL vdb export missing"; exit 1; }
+echo "ok   record --vdb                 $(du -h "$OUT/vdb/vdb/frame_00000.vdb" | cut -f1)"
 echo "all smoke renders passed ($OUT)"

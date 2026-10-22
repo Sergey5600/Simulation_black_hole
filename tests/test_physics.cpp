@@ -1,7 +1,18 @@
 // Physics regression tests against analytic Schwarzschild results.
 // Run: ctest --output-on-failure   (or ./bh_tests)
+#include <bit>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <random>
+#include <vector>
+
+#include "io/VdbWriter.hpp"
+#include "miniz.h"
 
 #include "backend/CpuBackend.hpp"
 #include "core/Fall.hpp"
@@ -451,6 +462,143 @@ void testJourney() {
   checkNear("journey: the story clock reaches 1 at the release", j.at(0.58f).cosmicTime, 1.0, 1e-3);
 }
 
+// Reads back what vdb::writeFile writes (the OpenVDB 10 layout, no tiles) into
+// a map from voxel coordinates to values. Checked against OpenVDB itself once;
+// this keeps the writer honest without depending on the library.
+struct VdbReadBack {
+  std::vector<std::string> names;
+  std::map<std::tuple<int, int, int>, std::vector<float>> voxels[2];
+  bool ok = true;
+};
+
+VdbReadBack readVdb(const std::string& path) {
+  VdbReadBack out;
+  std::ifstream f(path, std::ios::binary);
+  const std::vector<char> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  size_t at = 0;
+  auto get = [&](void* p, size_t n) {
+    if (at + n > d.size()) { out.ok = false; return; }
+    std::memcpy(p, d.data() + at, n);
+    at += n;
+  };
+  auto u32 = [&] { uint32_t v = 0; get(&v, 4); return v; };
+  auto i64 = [&] { int64_t v = 0; get(&v, 8); return v; };
+  auto str = [&] { std::string s(u32(), '\0'); get(s.data(), s.size()); return s; };
+  if (i64() != 0x56444220 || u32() != 224) out.ok = false;
+  at += 4 + 4 + 1 + 36;
+  if (u32() != 0) out.ok = false;
+  const uint32_t gridCount = u32();
+  for (uint32_t g = 0; g < gridCount && g < 2 && out.ok; ++g) {
+    out.names.push_back(str());
+    const int components = str() == "Tree_vec3s_5_4_3" ? 3 : 1;
+    str();
+    const int64_t gridPos = i64(), blockPos = i64(), endPos = i64();
+    at = static_cast<size_t>(gridPos);
+    if (u32() != 3) out.ok = false;  // ZIP | active mask
+    for (uint32_t m = u32(); m > 0; --m) {
+      str();
+      str();
+      at += u32();
+    }
+    str();
+    double map[18];
+    get(map, sizeof(map));
+    at += 4 + 4 * components;  // buffer count, background
+    if (u32() != 0) out.ok = false;
+    struct LeafInfo { int x, y, z; uint64_t mask[8]; };
+    std::vector<LeafInfo> leaves;
+    auto skipValues = [&] { at += 1; const int64_t n = i64(); at += static_cast<size_t>(n < 0 ? -n : n); };
+    for (uint32_t c = u32(); c > 0 && out.ok; --c) {
+      int top[3];
+      get(top, 12);
+      uint64_t mask32[512];
+      get(mask32, sizeof(mask32));
+      at += 4096;
+      skipValues();
+      for (int a = 0; a < 32768; ++a) {
+        if (!(mask32[a >> 6] >> (a & 63) & 1)) continue;
+        const int ox = top[0] + ((a >> 10) << 7), oy = top[1] + (((a >> 5) & 31) << 7), oz = top[2] + ((a & 31) << 7);
+        uint64_t mask16[64];
+        get(mask16, sizeof(mask16));
+        at += 512;
+        skipValues();
+        for (int b = 0; b < 4096; ++b) {
+          if (!(mask16[b >> 6] >> (b & 63) & 1)) continue;
+          LeafInfo leaf{ox + ((b >> 8) << 3), oy + (((b >> 4) & 15) << 3), oz + ((b & 15) << 3), {}};
+          get(leaf.mask, 64);
+          leaves.push_back(leaf);
+        }
+      }
+    }
+    if (static_cast<int64_t>(at) != blockPos) out.ok = false;
+    for (const LeafInfo& leaf : leaves) {
+      uint64_t mask[8];
+      get(mask, 64);
+      at += 1;
+      const int64_t size = i64();
+      int active = 0;
+      for (uint64_t w : mask) active += std::popcount(w);
+      std::vector<float> values(static_cast<size_t>(active * components));
+      if (size < 0) {
+        get(values.data(), static_cast<size_t>(-size));
+      } else {
+        mz_ulong length = static_cast<mz_ulong>(values.size() * 4);
+        if (mz_uncompress(reinterpret_cast<unsigned char*>(values.data()), &length,
+                          reinterpret_cast<const unsigned char*>(d.data() + at), static_cast<mz_ulong>(size)) != MZ_OK)
+          out.ok = false;
+        at += static_cast<size_t>(size);
+      }
+      int k = 0;
+      for (int n = 0; n < 512; ++n) {
+        if (!(mask[n >> 6] >> (n & 63) & 1)) continue;
+        out.voxels[g][{leaf.x + (n >> 6), leaf.y + ((n >> 3) & 7), leaf.z + (n & 7)}] =
+            std::vector<float>(values.begin() + k * components, values.begin() + (k + 1) * components);
+        ++k;
+      }
+    }
+    if (static_cast<int64_t>(at) != endPos) out.ok = false;  // the next grid's descriptor follows
+  }
+  return out;
+}
+
+void testVdbWriter() {
+  // Sparse random data across node boundaries and negative coordinates.
+  const std::array<int, 3> dims{21, 13, 140}, origin{-11, -4100, 4000};
+  const size_t n = static_cast<size_t>(dims[0]) * dims[1] * dims[2];
+  vdb::Grid density{"density", 1, std::vector<float>(n)}, color{"color", 3, std::vector<float>(n * 3)};
+  std::mt19937 rng(3);
+  std::uniform_real_distribution<float> u(0.0f, 1.0f);
+  size_t filled = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (u(rng) > 0.05f) continue;
+    density.values[i] = 1.0f + u(rng);
+    color.values[3 * i] = u(rng);
+    color.values[3 * i + 2] = 0.5f;
+    ++filled;
+  }
+  const std::string path = (std::filesystem::temp_directory_path() / "bh_test.vdb").string();
+  vdb::Transform transform;
+  transform.voxelSize = 0.5;
+  check(vdb::writeFile(path, {density, color}, dims, origin, transform), "vdb: file written", 1.0, 1.0);
+  const VdbReadBack back = readVdb(path);
+  bool same = back.ok && back.names.size() == 2 && back.names[0] == "density" && back.names[1] == "color" &&
+              back.voxels[0].size() == filled && back.voxels[1].size() == filled;
+  for (int i = 0; same && i < dims[0]; ++i)
+    for (int j = 0; same && j < dims[1]; ++j)
+      for (int k = 0; same && k < dims[2]; ++k) {
+        const size_t idx = (static_cast<size_t>(i) * dims[1] + j) * dims[2] + k;
+        if (density.values[idx] == 0.0f) continue;
+        const auto key = std::make_tuple(origin[0] + i, origin[1] + j, origin[2] + k);
+        const auto d = back.voxels[0].find(key);
+        const auto c = back.voxels[1].find(key);
+        same = d != back.voxels[0].end() && c != back.voxels[1].end() && d->second[0] == density.values[idx] &&
+               c->second[0] == color.values[3 * idx] && c->second[2] == color.values[3 * idx + 2];
+      }
+  check(same, "vdb: every active voxel reads back (float + vec3, ZIP, negative coords)", static_cast<double>(back.voxels[0].size()),
+        static_cast<double>(filled));
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -465,6 +613,7 @@ int main() {
   testSpectrum();
   testFall();
   testJourney();
+  testVdbWriter();
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "ALL PASSED", g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;
 }

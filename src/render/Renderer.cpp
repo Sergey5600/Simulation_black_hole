@@ -379,6 +379,19 @@ bool Renderer::splatParticles(const FrameInput& in, const RenderSettings& settin
   return true;
 }
 
+bool Renderer::readParticleVolume(const FrameInput& in, const RenderSettings& settings, std::vector<float>& rgba,
+                                  int& resolution, float& extent) {
+  if (in.pointCount == 0 || !splatParticles(in, settings)) return false;
+  resolution = volumeRes_;
+  extent = std::max(in.appearance.volumeExtent, 1.0f);
+  rgba.resize(static_cast<size_t>(resolution) * resolution * resolution * 4);
+  glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+  glBindTexture(GL_TEXTURE_3D, volumeEmission_);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glGetTexImage(GL_TEXTURE_3D, 0, GL_RGBA, GL_FLOAT, rgba.data());
+  return true;
+}
+
 void Renderer::accumulate(GLuint srcTexture, const gl::RenderTarget& dst, float weight) {
   glBindFramebuffer(GL_FRAMEBUFFER, dst.fbo);
   glViewport(0, 0, dst.width, dst.height);

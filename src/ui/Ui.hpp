@@ -44,6 +44,7 @@ struct UiActions {
   bool resetView = false;
   bool resetAppearance = false;
   bool screenshot = false;
+  bool exportVdb = false;
   int selectBackend = -1;  // 0 = CPU, 1 = CUDA
 };
 

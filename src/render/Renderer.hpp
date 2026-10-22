@@ -130,6 +130,12 @@ class Renderer {
   GLuint hdrTexture() const { return hdr_.color; }
   GLuint layerTexture(Layer layer) const { return layerTextures_[static_cast<size_t>(layer)]; }
 
+  // The particles' light as a voxel grid (the same one the ray tracer lenses):
+  // resolution³ RGBA floats, x fastest, covering a cube of `extent` M centered
+  // on the hole. False when there are no particles.
+  bool readParticleVolume(const FrameInput& in, const RenderSettings& settings, std::vector<float>& rgba,
+                          int& resolution, float& extent);
+
   // 256x1 sRGB strips used as legends in the UI (ImTextureID-compatible).
   GLuint colormapTexture(Colormap c) const { return colormapStrips_[static_cast<size_t>(c)]; }
 

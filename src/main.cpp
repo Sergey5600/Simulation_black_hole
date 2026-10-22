@@ -61,7 +61,9 @@ void printUsage() {
       "  --layers LIST       also write separate sequences for compositing into DIR/<layer>/:\n"
       "                      beauty, sky, disk, particles, events, peach, singularity (linear light,\n"
       "                      alpha = coverage: they add up to beauty), hud (PNG with alpha), or all\n"
-      "  --layer-format F    exr (default: half-float OpenEXR, linear) or png (tone-mapped)\n");
+      "  --layer-format F    exr (default: half-float OpenEXR, linear) or png (tone-mapped)\n"
+      "  --vdb               also write the particles' light as OpenVDB volumes (DIR/vdb/, grids\n"
+      "                      density and color, z-up for Blender; 1 unit = 1 M)\n");
 }
 
 }  // namespace
@@ -133,6 +135,8 @@ int main(int argc, char** argv) {
       opt.hud = true;
     } else if (!std::strcmp(a, "--mass")) {
       opt.solarMasses = std::max(1.0, std::atof(next()));
+    } else if (!std::strcmp(a, "--vdb")) {
+      opt.vdb = true;
     } else if (!std::strcmp(a, "--layers")) {
       opt.layers = next();
     } else if (!std::strcmp(a, "--layer-format")) {

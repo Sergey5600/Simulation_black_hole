@@ -17,5 +17,7 @@ bool writeExr(const std::string& path, int width, int height, const float* rgba)
 
 // "screenshots/blackhole_YYYYMMDD_HHMMSS.png" (directory is created on demand).
 std::string makeScreenshotPath();
+// "<folder>/blackhole_YYYYMMDD_HHMMSS<extension>".
+std::string makeTimestampedPath(const char* folder, const char* extension);
 
 }  // namespace bh

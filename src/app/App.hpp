@@ -52,6 +52,7 @@ struct AppOptions {
   int autoExposure = -1;           // -1: on for first-person journeys only; 0 off; 1 on
   std::string layers;              // comma list of compositing layers to write (see --layers)
   std::string layerFormat = "exr"; // exr (linear) or png (tone-mapped)
+  bool vdb = false;                // also write the particle volume per frame (DIR/vdb/)
   double solarMasses = 4.3e6;      // hole mass for the readout's units (Sagittarius A*)
 };
 
@@ -77,6 +78,8 @@ class App {
   int record();
   void setJourneyCamera(FrameInput& in, const ViewPreset& base, const JourneyFrame& f);
   void takeScreenshot(const std::string& path, int width, int height);
+  // Saves the particles' light as an OpenVDB file (grids "density" and "color").
+  bool exportVdb(const std::string& path, FrameInput in, const RenderSettings& settings);
   // Draws ImGui content (e.g. the journey readout) on top of an off-screen target.
   void drawOverlay(const gl::RenderTarget& target, const std::function<void()>& draw);
 
@@ -103,6 +106,7 @@ class App {
   float pendingScroll_ = 0.0f;
   double lastMouseX_ = 0.0, lastMouseY_ = 0.0;
   bool cleanScreenshotPending_ = false;
+  bool vdbPending_ = false;
 };
 
 }  // namespace bh

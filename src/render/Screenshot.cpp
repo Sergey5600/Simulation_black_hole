@@ -62,7 +62,7 @@ bool saveScreenshot(const std::string& path, int width, int height) {
   return writeImage(path, width, height, pixels.data());
 }
 
-std::string makeScreenshotPath() {
+std::string makeTimestampedPath(const char* folder, const char* extension) {
   const std::time_t now = std::time(nullptr);
   std::tm tm{};
 #ifdef _WIN32
@@ -70,9 +70,11 @@ std::string makeScreenshotPath() {
 #else
   localtime_r(&now, &tm);
 #endif
-  char name[64];
-  std::strftime(name, sizeof(name), "screenshots/blackhole_%Y%m%d_%H%M%S.png", &tm);
-  return name;
+  char stamp[32];
+  std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tm);
+  return std::string(folder) + "/blackhole_" + stamp + extension;
 }
+
+std::string makeScreenshotPath() { return makeTimestampedPath("screenshots", ".png"); }
 
 }  // namespace bh
