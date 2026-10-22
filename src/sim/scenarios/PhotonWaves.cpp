@@ -34,7 +34,7 @@ void PhotonWaves::reset(SimBackend& /*backend*/, uint32_t /*seed*/, float time) 
   nextEmission_ = time;
 }
 
-void PhotonWaves::update(SimBackend& backend, float time) {
+void PhotonWaves::update(SimBackend& backend, float time, const StepParams& /*sp*/) {
   // Catch up on every front that should have been emitted by now (bounded so a
   // huge time step cannot stall the frame).
   for (int guard = 0; time >= nextEmission_ && guard < fronts_; ++guard) {

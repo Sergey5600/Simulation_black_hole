@@ -10,7 +10,7 @@ namespace {
 void printUsage() {
   std::printf(
       "Usage: blackhole [options]\n"
-      "  --scenario N        0 = accretion disk, 1 = light waves\n"
+      "  --scenario N        0 = accretion disk, 1 = light waves, 2 = star disruption\n"
       "  --size WxH          window size (default 1600x900)\n"
       "  --set Label=value   set a scenario parameter by its UI label, e.g. --set \"Particles=800000\"\n"
       "  --warmup T          pre-run T units of simulated time (M/c)\n"

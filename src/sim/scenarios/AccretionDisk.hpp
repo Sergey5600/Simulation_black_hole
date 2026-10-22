@@ -15,6 +15,7 @@ class AccretionDisk final : public Scenario {
   ScenarioParams params() const override;
   void configureStep(StepParams& sp) const override;
   void reset(SimBackend& backend, uint32_t seed, float time) override;
+  bool tagIsBrightness() const override { return true; }
 
   std::vector<ParamDesc> parameters() override;
   std::vector<QuantityOption> quantities() const override;

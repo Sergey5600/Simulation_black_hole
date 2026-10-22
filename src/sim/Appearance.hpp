@@ -19,6 +19,7 @@ enum class Quantity : int {
   TimeDilation = 4,     // dτ/dt
   Age = 5,              // photons: time since emission / lifetime (wave phase, 0..1)
   ImpactParameter = 6,  // photon b = L/E (captured if b < 3√3 M)
+  Tag = 7,              // scenario-defined per-particle value (e.g. layer of the disrupted star)
 };
 
 enum class Colormap : int { Nebula = 0, Inferno, Magma, Plasma, Viridis, Turbo, Ice, Count };

@@ -44,8 +44,12 @@ class Scenario {
   // `seed` is constant for the run: use it as both spawn seed and runSeed.
   virtual void reset(SimBackend& backend, uint32_t seed, float time) = 0;
 
-  // Called once per simulation step before integration (e.g. to emit wave fronts).
-  virtual void update(SimBackend& /*backend*/, float /*time*/) {}
+  // Called once per simulation step before integration (e.g. to emit wave
+  // fronts). `sp` is the step about to be taken.
+  virtual void update(SimBackend& /*backend*/, float /*time*/, const StepParams& /*sp*/) {}
+
+  // Whether Particle::tag is a brightness factor (true) or data for Quantity::Tag.
+  virtual bool tagIsBrightness() const { return false; }
 
   // Age at which particles are recycled (0 = they live until they die).
   virtual float lifetime() const { return 0.0f; }

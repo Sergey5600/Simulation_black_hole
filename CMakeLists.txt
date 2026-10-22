@@ -29,6 +29,7 @@ add_library(bh_sim STATIC
   src/sim/Simulation.cpp
   src/sim/scenarios/AccretionDisk.cpp
   src/sim/scenarios/PhotonWaves.cpp
+  src/sim/scenarios/StarDisruption.cpp
   src/backend/CpuBackend.cpp
 )
 target_link_libraries(bh_sim PUBLIC bh_core)

@@ -17,6 +17,7 @@
 #include "render/Screenshot.hpp"
 #include "sim/scenarios/AccretionDisk.hpp"
 #include "sim/scenarios/PhotonWaves.hpp"
+#include "sim/scenarios/StarDisruption.hpp"
 #include "ui/Theme.hpp"
 
 namespace bh {
@@ -66,6 +67,7 @@ bool App::init() {
   sim_ = std::make_unique<Simulation>(std::make_unique<CpuBackend>());
   sim_->addScenario(std::make_unique<AccretionDisk>());
   sim_->addScenario(std::make_unique<PhotonWaves>());
+  sim_->addScenario(std::make_unique<StarDisruption>());
   for (size_t i = 0; i < sim_->scenarioCount(); ++i) appearances_.push_back(sim_->scenario(i).defaults().appearance);
 
   selectScenario(static_cast<size_t>(std::clamp(options_.scenario, 0, static_cast<int>(sim_->scenarioCount()) - 1)));
@@ -175,6 +177,7 @@ void App::onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int /
     case GLFW_KEY_F: app.camera_.autoRotate = !app.camera_.autoRotate; break;
     case GLFW_KEY_1: app.selectScenario(0); break;
     case GLFW_KEY_2: app.selectScenario(1); break;
+    case GLFW_KEY_3: app.selectScenario(2); break;
     default: break;
   }
 }
@@ -225,6 +228,7 @@ int App::run() {
     FrameInput in;
     in.pointCount = count;
     in.photons = sim_->current().params().type == ScenarioType::PhotonWaves;
+    in.scalarIsBrightness = sim_->current().tagIsBrightness();
     in.appearance = appearance();
     in.lifetime = sim_->current().lifetime();
     in.view = camera_.view();

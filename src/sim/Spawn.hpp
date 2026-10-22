@@ -7,7 +7,7 @@
 // so they can run inside a CUDA kernel later (no virtual calls, POD params).
 namespace bh {
 
-enum class ScenarioType : int { AccretionDisk = 0, PhotonWaves = 1 };
+enum class ScenarioType : int { AccretionDisk = 0, PhotonWaves = 1, StarDisruption = 2 };
 
 struct DiskParams {
   float innerRadius = gr::kIsco;
@@ -33,12 +33,49 @@ struct WaveParams {
   float incidence = 0.0f;        // direction of travel in the disk plane, radians
 };
 
+// A star (or gas cloud) on an orbit that brings it close to the hole.
+// "Frozen-in" model of a tidal disruption: self-gravity holds the star together
+// until its center reaches the disruption radius, so until then it moves as a
+// rigid ball along the center-of-mass geodesic; after release every particle is
+// a free test particle and tides spread the debris (ΔE ≈ M R / r_t²).
+struct StarParams {
+  float starRadius = 1.2f;       // M. A real Sun around Sgr A* would be ~0.1 M; bigger reads better on screen.
+  float pericenter = 7.0f;       // closest approach of the star's center, M
+  float energy = 1.0f;           // specific orbital energy E (1 = parabolic, < 1 bound)
+  float startDistance = 60.0f;
+  float inclination = 0.0f;      // orbit tilt against the equatorial plane, radians
+  float disruptionRadius = 9.0f; // where self-gravity loses to tides (released at pericenter at the latest)
+
+  // Center-of-mass state, maintained by the host while the star is intact.
+  Vec3 center{0.0f, 0.0f, 0.0f};
+  Vec3 velocity{0.0f, 0.0f, 0.0f};
+};
+
+// Initial center-of-mass state from the conserved E and L of a Schwarzschild
+// geodesic: at pericenter ṙ = 0, so L² = r_p² (E² / (1 - 2M/r_p) - 1).
+BH_HD inline void starOrbitStart(const StarParams& s, Vec3& center, Vec3& velocity) {
+  const float rp = fmaxf(s.pericenter, 2.2f);
+  const float l2 = fmaxf(rp * rp * (s.energy * s.energy / gr::lapse2(rp) - 1.0f), 0.0f);
+  const float r0 = s.startDistance;
+  const float rdot2 = s.energy * s.energy - gr::lapse2(r0) * (1.0f + l2 / (r0 * r0));
+  const float rdot = -sqrtf(fmaxf(rdot2, 0.0f));  // falling in
+  const float vt = sqrtf(l2) / r0;
+
+  // Orbit plane tilted about the x axis; the star starts on the -x side.
+  const float ci = cosf(s.inclination), si = sinf(s.inclination);
+  const Vec3 radial{-1.0f, 0.0f, 0.0f};
+  const Vec3 tangent{0.0f, -si, ci};  // L along +y when untilted
+  center = radial * r0;
+  velocity = radial * rdot + tangent * vt;
+}
+
 struct ScenarioParams {
   ScenarioType type = ScenarioType::AccretionDisk;
   bool respawnDead = false;  // refill dead slots every step (continuous inflow)
   uint32_t runSeed = 0;      // fixed for a whole run (coherent patterns across refills)
   DiskParams disk;
   WaveParams wave;
+  StarParams star;
 };
 
 namespace detail {
@@ -138,6 +175,25 @@ BH_HD inline void spawnWave(const WaveParams& w, uint32_t index, float time, Par
   p.birth = time;
 }
 
+BH_HD inline void spawnStar(const StarParams& s, uint32_t index, uint32_t runSeed, float time, Particle& p) {
+  // Centrally concentrated ball. The offset depends only on (index, runSeed),
+  // so re-spawning every frame while the star is intact keeps it rigid.
+  // tag = depth inside the star (0 core, 1 surface).
+  Rng rng(index, runSeed);
+  const float z = rng.uniform(-1.0f, 1.0f);
+  const float phi = rng.uniform(0.0f, 6.28318530718f);
+  const float rho = sqrtf(fmaxf(0.0f, 1.0f - z * z));
+  const float depth = powf(rng.uniform(), 0.5f);
+  const Vec3 offset = Vec3{rho * cosf(phi), z, rho * sinf(phi)} * (depth * s.starRadius);
+
+  p.x = s.center + offset;
+  p.v = s.velocity;
+  p.age = 0.0f;
+  p.flags = kAlive;
+  p.tag = depth;
+  p.birth = time;
+}
+
 }  // namespace detail
 
 // Fills `p` with a fresh particle for slot `index`. `initial` distinguishes the
@@ -147,6 +203,7 @@ BH_HD inline void spawnParticle(const ScenarioParams& sc, uint32_t index, uint32
   switch (sc.type) {
     case ScenarioType::AccretionDisk: detail::spawnDisk(sc.disk, index, seed, sc.runSeed, time, initial, p); break;
     case ScenarioType::PhotonWaves: detail::spawnWave(sc.wave, index, time, p); break;
+    case ScenarioType::StarDisruption: detail::spawnStar(sc.star, index, sc.runSeed, time, p); break;
   }
 }
 

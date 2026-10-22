@@ -11,6 +11,7 @@
 #define Q_TIME_DILATION 4
 #define Q_AGE 5
 #define Q_IMPACT 6
+#define Q_TAG 7
 
 #define CM_NEBULA 0
 #define CM_INFERNO 1

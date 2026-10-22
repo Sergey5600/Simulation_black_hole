@@ -17,7 +17,7 @@ class PhotonWaves final : public Scenario {
   ScenarioParams params() const override;
   void configureStep(StepParams& sp) const override;
   void reset(SimBackend& backend, uint32_t seed, float time) override;
-  void update(SimBackend& backend, float time) override;
+  void update(SimBackend& backend, float time, const StepParams& sp) override;
 
   std::vector<ParamDesc> parameters() override;
   std::vector<QuantityOption> quantities() const override;

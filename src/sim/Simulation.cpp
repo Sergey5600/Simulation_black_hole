@@ -35,13 +35,12 @@ void Simulation::update(float realDt) {
 
 void Simulation::advance(float simDt) {
   Scenario& sc = current();
-  sc.update(*backend_, time_);
-
   StepParams sp;
   sp.dt = simDt;
   sp.timeMode = controls_.timeMode;
   sp.accuracy = controls_.accuracy;
   sc.configureStep(sp);
+  sc.update(*backend_, time_, sp);
 
   ScenarioParams params = sc.params();
   params.runSeed = seed_;

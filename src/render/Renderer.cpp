@@ -308,6 +308,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
                        static_cast<float>(in.height) / (2.0f * std::tan(in.fovYRadians * 0.5f)));
     pointsProgram_.set("uPointSize", a.pointSize);
     pointsProgram_.set("uPhotons", in.photons);
+    pointsProgram_.set("uScalarIsBrightness", in.scalarIsBrightness);
     pointsProgram_.set("uStyle", static_cast<int>(a.style));
     pointsProgram_.set("uQuantity", static_cast<int>(a.quantity));
     pointsProgram_.set("uColormap", static_cast<int>(a.colormap));

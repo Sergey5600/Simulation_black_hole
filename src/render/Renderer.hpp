@@ -27,6 +27,7 @@ struct RenderSettings {
 struct FrameInput {
   size_t pointCount = 0;
   bool photons = false;           // particles are light, not gas
+  bool scalarIsBrightness = false; // PointVertex::scalar modulates brightness
   Appearance appearance;
   float lifetime = 0.0f;          // photon slot lifetime: normalizes Age, drives fading
 

@@ -9,6 +9,7 @@ uniform vec3 uCameraPos;
 uniform float uPixelsPerUnit;  // projection scale: pixels per world unit at distance 1
 uniform float uPointSize;      // world-space sprite diameter
 uniform bool uPhotons;
+uniform bool uScalarIsBrightness;  // gas: per-particle brightness grain in aPosScalar.w
 
 uniform int uStyle;
 uniform int uQuantity;
@@ -30,6 +31,7 @@ float quantityValue(int q, float r, float g) {
     if (q == Q_REDSHIFT) return g;
     if (q == Q_TIME_DILATION) return aDirValue.w;
     if (q == Q_AGE) return uLifetime > 0.0 ? aPosScalar.w / uLifetime : aPosScalar.w;  // phase 0..1
+    if (q == Q_TAG) return aPosScalar.w;
     return aDirValue.w;  // Q_IMPACT
 }
 
@@ -58,11 +60,11 @@ void main() {
         float tObserved = t * (uColorShift ? g : 1.0);
         color = blackbody(tObserved * uPeakTemperature);
         intensity *= t * t * t * t;           // Stefan-Boltzmann: emitted flux ∝ T⁴
-        intensity *= aPosScalar.w;            // clumpy gas
+        if (uScalarIsBrightness) intensity *= aPosScalar.w;  // clumpy gas
     } else {
         float v = quantityValue(uQuantity, r, g);
         color = colormap(uColormap, (v - uRange.x) / (uRange.y - uRange.x));
-        if (!uPhotons) intensity *= aPosScalar.w;
+        if (uScalarIsBrightness) intensity *= aPosScalar.w;
     }
     if (uBeaming && !uPhotons) intensity *= g * g * g * g;  // relativistic beaming, I ∝ g⁴
 

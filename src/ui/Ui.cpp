@@ -193,7 +193,7 @@ void drawFooter(UiActions& out) {
   if (SecondaryButton("Save screenshot", ImVec2(-FLT_MIN, 0.0f))) out.screenshot = true;
   Caption("Drag: orbit  \xC2\xB7  Right-drag: pan  \xC2\xB7  Scroll: zoom\n"
           "Space: pause  \xC2\xB7  R: restart  \xC2\xB7  H: hide UI  \xC2\xB7  P: screenshot  \xC2\xB7  "
-          "F: auto-rotate  \xC2\xB7  1/2: scenario");
+          "F: auto-rotate  \xC2\xB7  1-3: scenario");
 }
 
 void drawPanel(UiContext& ctx, UiActions& out) {
