@@ -27,6 +27,7 @@ struct AppOptions {
   std::string backend = "auto";  // "auto" (CUDA if available), "cpu" or "cuda"
   std::vector<std::pair<std::string, std::string>> params;  // --set "Label=value"
   float yaw = NAN, pitch = NAN, distance = NAN;             // optional camera override
+  bool lensing = false;
 };
 
 class App {

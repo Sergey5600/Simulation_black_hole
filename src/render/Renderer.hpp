@@ -18,6 +18,21 @@ struct RenderSettings {
   float vignette = 0.35f;
 
   bool stars = true;
+  float skyBrightness = 1.0f;
+
+  // Gravitational lensing (ray-traced background and thin disk).
+  bool lensing = false;
+  bool lensedDisk = true;
+  float diskInner = 6.0f;
+  float diskOuter = 30.0f;
+  float diskTemperature = 5800.0f;
+  float diskBrightness = 1.0f;
+  bool diskBeaming = true;
+  bool diskColorShift = true;
+  bool particlesWhenLensing = false;  // overlay the (unlensed) particles
+  int rayMaxSteps = 600;
+  float rayStepScale = 0.035f;
+
   bool guideHorizon = false;
   bool guidePhotonSphere = false;
   bool guideIsco = false;
@@ -38,6 +53,7 @@ struct FrameInput {
   int width = 1;                  // framebuffer pixels
   int height = 1;
   float dpiScale = 1.0f;
+  float time = 0.0f;              // simulation time (animates the ray-traced disk)
 };
 
 // HDR point renderer: stars -> horizon -> guides -> additive particle splats
@@ -70,10 +86,13 @@ class Renderer {
   void buildStars();
   void buildGuides();
   void buildColormapStrips();
+  void buildSky();
   void renderBloom(const RenderSettings& settings);
 
   gl::Program pointsProgram_, starsProgram_, horizonProgram_, linesProgram_;
   gl::Program bloomDownProgram_, bloomUpProgram_, compositeProgram_, stripProgram_;
+  gl::Program skyGenProgram_, backgroundProgram_;
+  GLuint skyCubemap_ = 0;
 
   GLuint emptyVao_ = 0;
   GLuint pointsVao_ = 0, pointsVbo_ = 0;

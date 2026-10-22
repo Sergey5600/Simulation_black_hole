@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "EmbeddedShaders.hpp"
 #include "core/Random.hpp"
 #include "core/Schwarzschild.hpp"
@@ -32,6 +34,8 @@ bool Renderer::init() {
   ok &= bloomUpProgram_.build("bloom_up", {fullscreen_vert}, {bloom_up_frag});
   ok &= compositeProgram_.build("composite", {fullscreen_vert}, {composite_frag});
   ok &= stripProgram_.build("colormap_strip", {fullscreen_vert}, {common, colormap_strip_frag});
+  ok &= skyGenProgram_.build("sky_gen", {fullscreen_vert}, {common, sky_gen_frag});
+  ok &= backgroundProgram_.build("lensing", {fullscreen_vert}, {common, lensing_frag});
   if (!ok) return false;
 
   glGenVertexArrays(1, &emptyVao_);
@@ -49,6 +53,7 @@ bool Renderer::init() {
   buildStars();
   buildGuides();
   buildColormapStrips();
+  buildSky();
   return true;
 }
 
@@ -56,6 +61,7 @@ void Renderer::shutdown() {
   hdr_.destroy();
   for (auto& m : bloomMips_) m.destroy();
   glDeleteTextures(static_cast<GLsizei>(colormapStrips_.size()), colormapStrips_.data());
+  glDeleteTextures(1, &skyCubemap_);
   const GLuint vaos[] = {emptyVao_, pointsVao_, starsVao_, linesVao_};
   const GLuint vbos[] = {pointsVbo_, starsVbo_, linesVbo_};
   glDeleteVertexArrays(4, vaos);
@@ -196,6 +202,56 @@ void Renderer::buildColormapStrips() {
   glDeleteFramebuffers(1, &fbo);
 }
 
+// Bakes the sky (Milky Way band + the star points) into a cube map once, so the
+// lensing shader can look up any escaped ray direction.
+void Renderer::buildSky() {
+  constexpr int kFace = 1024;
+  glGenTextures(1, &skyCubemap_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, skyCubemap_);
+  glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, GL_RGBA16F, kFace, kFace);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+
+  // Standard OpenGL cube-map face orientations.
+  const glm::vec3 targets[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  const glm::vec3 ups[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+  const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+
+  GLuint fbo = 0;
+  glGenFramebuffers(1, &fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glViewport(0, 0, kFace, kFace);
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  for (int face = 0; face < 6; ++face) {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, skyCubemap_,
+                           0);
+    const glm::mat4 view = glm::lookAt(glm::vec3(0.0f), targets[face], ups[face]);
+
+    glDisable(GL_BLEND);
+    skyGenProgram_.use();
+    skyGenProgram_.set("uInvViewProj", glm::inverse(proj * view));
+    glBindVertexArray(emptyVao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    starsProgram_.use();
+    starsProgram_.set("uViewRotation", view);
+    starsProgram_.set("uProj", proj);
+    starsProgram_.set("uScale", 1.2f);
+    glBindVertexArray(starsVao_);
+    glDrawArrays(GL_POINTS, 0, starCount_);
+  }
+  glDisable(GL_BLEND);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glDeleteFramebuffers(1, &fbo);
+}
+
 void Renderer::ensureTargets(int width, int height) {
   if (hdr_.width == width && hdr_.height == height) return;
   hdr_.create(width, height, GL_RGBA16F, true);
@@ -260,22 +316,34 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_PROGRAM_POINT_SIZE);
 
-  // 1. Stars at infinity.
-  if (settings.stars) {
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
-    starsProgram_.use();
-    starsProgram_.set("uViewRotation", glm::mat4(glm::mat3(in.view)));
-    starsProgram_.set("uProj", in.projection);
-    starsProgram_.set("uScale", in.dpiScale);
-    glBindVertexArray(starsVao_);
-    glDrawArrays(GL_POINTS, 0, starCount_);
-  }
-
-  // 2. Event horizon: opaque, writes depth.
+  // 1. Background: the sky along straight rays, or the full ray-traced view
+  //    (lensed sky, shadow, thin disk) when lensing is on.
+  glDisable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
+  backgroundProgram_.use();
+  backgroundProgram_.set("uInvViewProj", glm::inverse(viewProj));
+  backgroundProgram_.set("uCameraPos", in.cameraPos);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, skyCubemap_);
+  backgroundProgram_.set("uSky", 0);
+  backgroundProgram_.set("uSkyBrightness", settings.stars ? settings.skyBrightness : 0.0f);
+  backgroundProgram_.set("uLensing", settings.lensing);
+  backgroundProgram_.set("uDisk", settings.lensedDisk);
+  backgroundProgram_.set("uDiskRadii", glm::vec2(settings.diskInner, settings.diskOuter));
+  backgroundProgram_.set("uDiskBrightness", settings.diskBrightness);
+  backgroundProgram_.set("uPeakTemperature", settings.diskTemperature);
+  backgroundProgram_.set("uBeaming", settings.diskBeaming);
+  backgroundProgram_.set("uColorShift", settings.diskColorShift);
+  backgroundProgram_.set("uTime", in.time);
+  backgroundProgram_.set("uMaxSteps", settings.rayMaxSteps);
+  backgroundProgram_.set("uStepScale", settings.rayStepScale);
+  glBindVertexArray(emptyVao_);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+
+  // 2. Event horizon: writes depth so particles behind it are hidden. With
+  //    lensing the ray tracer already drew the (larger) shadow: depth only.
   glEnable(GL_DEPTH_TEST);
+  if (settings.lensing) glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
   glDepthFunc(GL_LESS);
   glDepthMask(GL_TRUE);
   horizonProgram_.use();
@@ -285,6 +353,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
   horizonProgram_.set("uRadius", gr::kHorizon);
   glBindVertexArray(emptyVao_);
   glDrawArrays(GL_TRIANGLES, 0, 3);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
   // 3. Guides.
   glDepthMask(GL_FALSE);
@@ -303,7 +372,7 @@ void Renderer::render(const FrameInput& in, const RenderSettings& settings) {
   if (settings.guideIsco) drawLines(iscoRing_, GL_LINE_LOOP, {0.35f, 0.62f, 1.0f, 0.45f});
 
   // 4. Particles: additive Gaussian splats, depth-tested against the horizon.
-  if (in.pointCount > 0) {
+  if (in.pointCount > 0 && (!settings.lensing || settings.particlesWhenLensing)) {
     const Appearance& a = in.appearance;
     glBlendFunc(GL_ONE, GL_ONE);
     pointsProgram_.use();

@@ -10,7 +10,7 @@ namespace bh {
 // hole (Shapiro delay) and leave a shadow behind it (photons with b < 3√3 M).
 class PhotonWaves final : public Scenario {
  public:
-  const char* name() const override { return "Light waves"; }
+  const char* name() const override { return "Waves"; }
   const char* subtitle() const override { return "Wave fronts of light bending around the shadow"; }
 
   size_t particleCount() const override;

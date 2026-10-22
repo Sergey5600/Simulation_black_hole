@@ -8,8 +8,8 @@ namespace bh {
 // spiral in through the ISCO and plunge; new gas is fed in at the outer edge.
 class AccretionDisk final : public Scenario {
  public:
-  const char* name() const override { return "Accretion disk"; }
-  const char* subtitle() const override { return "Gas on Schwarzschild geodesics, colored by what it emits"; }
+  const char* name() const override { return "Disk"; }
+  const char* subtitle() const override { return "Accretion disk: gas on Schwarzschild geodesics, colored by what it emits"; }
 
   size_t particleCount() const override { return static_cast<size_t>(count_); }
   ScenarioParams params() const override;

@@ -169,6 +169,38 @@ void drawAppearance(UiContext& ctx, UiActions& out) {
   EndSection();
 }
 
+void drawRayTracing(UiContext& ctx) {
+  if (!BeginSection("Ray tracing")) return;
+  RenderSettings& r = ctx.render;
+  ToggleRow("Gravitational lensing", &r.lensing,
+            "Trace a light ray backwards from the camera for every pixel along the exact Schwarzschild "
+            "geodesic: the sky bends, the shadow appears (radius 3\xE2\x88\x9A" "3 M) and the back of the disk "
+            "shows above and below the hole. Key: L.");
+  if (r.lensing) {
+    ToggleRow("Thin disk", &r.lensedDisk,
+              "Novikov-Thorne disk on Keplerian orbits, with the exact redshift of every ray (Doppler and "
+              "gravitational).");
+    if (r.lensedDisk) {
+      SliderRow("Disk inner edge", &r.diskInner, 2.5f, 20.0f, "%.1f M", false,
+                "ISCO = 6 M. Inside it gas cannot orbit; going lower is not physical for a thin disk.");
+      SliderRow("Disk outer edge", &r.diskOuter, 8.0f, 120.0f, "%.0f M");
+      SliderRow("Disk temperature", &r.diskTemperature, 1500.0f, 40000.0f, "%.0f K", true);
+      SliderRow("Disk brightness", &r.diskBrightness, 0.05f, 20.0f, "%.2f", true);
+      ToggleRow("Disk beaming", &r.diskBeaming, "Brightness scales as g^4.");
+      ToggleRow("Disk color shift", &r.diskColorShift, "Observed temperature = g \xC2\xB7 T.");
+    }
+    ToggleRow("Show particles", &r.particlesWhenLensing,
+              "Overlay the simulated particles. They are not lensed yet, so they will not line up with the "
+              "bent image.");
+    SliderRow("Ray step", &r.rayStepScale, 0.005f, 0.1f, "%.3f", true,
+              "Integration step as a fraction of the distance to the hole. Smaller = sharper photon ring, "
+              "slower.");
+    SliderIntRow("Max steps", &r.rayMaxSteps, 100, 3000, true);
+  }
+  SliderRow("Sky brightness", &r.skyBrightness, 0.0f, 5.0f, "%.2f");
+  EndSection();
+}
+
 void drawPost(UiContext& ctx) {
   if (!BeginSection("Image", false)) return;
   RenderSettings& r = ctx.render;
@@ -199,7 +231,7 @@ void drawGuides(UiContext& ctx) {
   ToggleRow("Photon sphere  3M", &r.guidePhotonSphere, "Light can orbit here (unstably).");
   ToggleRow("ISCO  6M", &r.guideIsco, "Innermost stable circular orbit: gas inside it plunges.");
   ToggleRow("Grid", &r.guideGrid, "Rings every 10 M in the equatorial plane.");
-  ToggleRow("Stars", &r.stars);
+  ToggleRow("Sky", &r.stars);
   EndSection();
 }
 
@@ -208,7 +240,7 @@ void drawFooter(UiActions& out) {
   if (SecondaryButton("Save screenshot", ImVec2(-FLT_MIN, 0.0f))) out.screenshot = true;
   Caption("Drag: orbit  \xC2\xB7  Right-drag: pan  \xC2\xB7  Scroll: zoom\n"
           "Space: pause  \xC2\xB7  R: restart  \xC2\xB7  H: hide UI  \xC2\xB7  P: screenshot  \xC2\xB7  "
-          "F: auto-rotate  \xC2\xB7  1-3: scenario");
+          "F: auto-rotate  \xC2\xB7  L: lensing  \xC2\xB7  1-3: scenario");
 }
 
 void drawPanel(UiContext& ctx, UiActions& out) {
@@ -230,6 +262,7 @@ void drawPanel(UiContext& ctx, UiActions& out) {
     drawSimulation(ctx, out);
     drawScenarioParams(ctx, out);
     drawAppearance(ctx, out);
+    drawRayTracing(ctx);
     drawPost(ctx);
     drawCamera(ctx, out);
     drawGuides(ctx);

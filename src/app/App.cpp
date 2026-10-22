@@ -94,6 +94,7 @@ bool App::init() {
     for (float t = 0.0f; t < options_.warmup; t += step) sim_->advance(step);
   }
   uiState_.showPanel = !options_.hideUi;
+  render_.lensing = options_.lensing;
   return true;
 }
 
@@ -202,6 +203,7 @@ void App::onKey(GLFWwindow* window, int key, int /*scancode*/, int action, int /
     case GLFW_KEY_H: app.uiState_.showPanel = !app.uiState_.showPanel; break;
     case GLFW_KEY_P: app.cleanScreenshotPending_ = true; break;
     case GLFW_KEY_F: app.camera_.autoRotate = !app.camera_.autoRotate; break;
+    case GLFW_KEY_L: app.render_.lensing = !app.render_.lensing; break;
     case GLFW_KEY_1: app.selectScenario(0); break;
     case GLFW_KEY_2: app.selectScenario(1); break;
     case GLFW_KEY_3: app.selectScenario(2); break;
@@ -269,6 +271,7 @@ int App::run() {
     in.width = fbWidth;
     in.height = fbHeight;
     in.dpiScale = dpiScale_;
+    in.time = sim_->time();
     renderer_.render(in, render_);
 
     // Images without UI: P key / button, or the final frame of a --hide-ui capture.

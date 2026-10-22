@@ -28,7 +28,8 @@ void printUsage() {
       "  --frames N          frames to render before --screenshot (default 4)\n"
       "  --hide-ui           start with the UI hidden\n"
       "  --no-vsync          uncapped frame rate\n"
-      "  --backend B         auto (default: CUDA if available), cpu or cuda\n");
+      "  --backend B         auto (default: CUDA if available), cpu or cuda\n"
+      "  --lensing           start with ray-traced gravitational lensing on\n");
 }
 
 }  // namespace
@@ -62,6 +63,8 @@ int main(int argc, char** argv) {
       opt.frames = std::atoi(next());
     } else if (!std::strcmp(a, "--hide-ui")) {
       opt.hideUi = true;
+    } else if (!std::strcmp(a, "--lensing")) {
+      opt.lensing = true;
     } else if (!std::strcmp(a, "--backend")) {
       opt.backend = next();
     } else if (!std::strcmp(a, "--no-vsync")) {
