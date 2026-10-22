@@ -47,7 +47,7 @@ void StarDisruption::update(SimBackend& backend, float time, const StepParams& s
 
 std::vector<ParamDesc> StarDisruption::parameters() {
   return {
-      ParamDesc::integer("Particles", &count_, 10000, 2000000, true, nullptr, true),
+      ParamDesc::integer("Particles", &count_, 10000, 20000000, true, nullptr, true),
       ParamDesc::slider("Pericenter", &star_.pericenter, 3.0f, 40.0f, "%.1f M", true,
                         "Closest approach of the star's center. Parabolic orbits with pericenter below 4 M are "
                         "captured whole."),

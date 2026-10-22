@@ -5,6 +5,15 @@
 
 #include "app/App.hpp"
 
+#ifdef _WIN32
+// Laptops with switchable graphics: ask the driver for the discrete NVIDIA/AMD
+// GPU, so OpenGL and CUDA run on the same (fast) device.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 namespace {
 
 void printUsage() {
@@ -18,7 +27,8 @@ void printUsage() {
       "  --screenshot FILE   render a few frames, save a PNG and exit\n"
       "  --frames N          frames to render before --screenshot (default 4)\n"
       "  --hide-ui           start with the UI hidden\n"
-      "  --no-vsync          uncapped frame rate\n");
+      "  --no-vsync          uncapped frame rate\n"
+      "  --backend B         auto (default: CUDA if available), cpu or cuda\n");
 }
 
 }  // namespace
@@ -52,6 +62,8 @@ int main(int argc, char** argv) {
       opt.frames = std::atoi(next());
     } else if (!std::strcmp(a, "--hide-ui")) {
       opt.hideUi = true;
+    } else if (!std::strcmp(a, "--backend")) {
+      opt.backend = next();
     } else if (!std::strcmp(a, "--no-vsync")) {
       opt.vsync = false;
     } else {

@@ -62,13 +62,19 @@ void Renderer::shutdown() {
   glDeleteBuffers(3, vbos);
 }
 
-PointVertex* Renderer::beginPointUpload(size_t count) {
+Renderer::PointBuffer Renderer::reservePoints(size_t count) {
   glBindBuffer(GL_ARRAY_BUFFER, pointsVbo_);
   if (count > pointsCapacity_) {
     pointsCapacity_ = std::max(count, pointsCapacity_ + pointsCapacity_ / 2);
     glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(pointsCapacity_ * sizeof(PointVertex)), nullptr,
                  GL_STREAM_DRAW);
+    ++pointsGeneration_;
   }
+  return {pointsVbo_, pointsGeneration_};
+}
+
+PointVertex* Renderer::beginPointUpload(size_t count) {
+  reservePoints(count);
   if (count == 0) return nullptr;
   return static_cast<PointVertex*>(
       glMapBufferRange(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(count * sizeof(PointVertex)),

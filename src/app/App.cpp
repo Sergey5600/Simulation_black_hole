@@ -14,6 +14,9 @@
 #include <string>
 
 #include "backend/CpuBackend.hpp"
+#ifdef BH_HAS_CUDA
+#include "backend/CudaBackend.hpp"
+#endif
 #include "render/Screenshot.hpp"
 #include "sim/scenarios/AccretionDisk.hpp"
 #include "sim/scenarios/PhotonWaves.hpp"
@@ -64,7 +67,14 @@ bool App::init() {
 
   if (!renderer_.init()) return false;
 
-  sim_ = std::make_unique<Simulation>(std::make_unique<CpuBackend>());
+#ifdef BH_HAS_CUDA
+  cudaAvailable_ = CudaBackend::isAvailable(&cudaDevice_);
+#endif
+  const bool wantCuda = options_.backend == "cuda" || (options_.backend == "auto" && cudaAvailable_);
+  if (wantCuda && !cudaAvailable_) std::fprintf(stderr, "CUDA backend not available, using CPU\n");
+  usingCuda_ = wantCuda && cudaAvailable_;
+  sim_ = std::make_unique<Simulation>(makeBackend(usingCuda_));
+  std::printf("Compute backend: %s\n", sim_->backend().name());
   sim_->addScenario(std::make_unique<AccretionDisk>());
   sim_->addScenario(std::make_unique<PhotonWaves>());
   sim_->addScenario(std::make_unique<StarDisruption>());
@@ -89,6 +99,7 @@ bool App::init() {
 
 void App::shutdown() {
   if (!window_) return;
+  sim_.reset();  // GPU backends unregister GL buffers: do it while they still exist
   renderer_.shutdown();
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
@@ -130,12 +141,28 @@ void App::applyParamOverrides() {
   resetSimulation();
 }
 
+std::unique_ptr<SimBackend> App::makeBackend(bool cuda) {
+#ifdef BH_HAS_CUDA
+  if (cuda) return std::make_unique<CudaBackend>();
+#else
+  (void)cuda;
+#endif
+  return std::make_unique<CpuBackend>();
+}
+
+void App::selectBackend(bool cuda) {
+  if (cuda == usingCuda_ || (cuda && !cudaAvailable_)) return;
+  usingCuda_ = cuda;
+  sim_->setBackend(makeBackend(cuda));
+}
+
 void App::applyActions(const ui::UiActions& a) {
   if (a.selectScenario >= 0) selectScenario(static_cast<size_t>(a.selectScenario));
   if (a.reset) resetSimulation();
   if (a.resetView) camera_.setView(sim_->current().defaults().view, false);
   if (a.resetAppearance) appearance() = sim_->current().defaults().appearance;
   if (a.screenshot) cleanScreenshotPending_ = true;
+  if (a.selectBackend >= 0) selectBackend(a.selectBackend == 1);
 }
 
 void App::handleMouse() {
@@ -222,8 +249,12 @@ int App::run() {
 
     // Particles -> GL buffer (the CPU backend writes straight into mapped memory).
     const size_t count = sim_->backend().size();
-    if (PointVertex* dst = renderer_.beginPointUpload(count)) sim_->backend().writeVertices(dst);
-    renderer_.endPointUpload();
+    // GPU backends write into the GL buffer directly; otherwise map it and fill it on the CPU.
+    const Renderer::PointBuffer points = renderer_.reservePoints(count);
+    if (!sim_->backend().writeVerticesGl(points.id, points.generation)) {
+      if (PointVertex* dst = renderer_.beginPointUpload(count)) sim_->backend().writeVertices(dst);
+      renderer_.endPointUpload();
+    }
 
     FrameInput in;
     in.pointCount = count;
@@ -259,7 +290,7 @@ int App::run() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    ui::UiContext ctx{*sim_, appearance(), render_, camera_, uiState_, renderer_, stats_};
+    ui::UiContext ctx{*sim_, appearance(), render_, camera_, uiState_, renderer_, stats_, cudaAvailable_, usingCuda_};
     const ui::UiActions actions = ui::drawUi(ctx);
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

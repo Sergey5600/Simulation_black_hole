@@ -33,8 +33,13 @@ class SimBackend {
   // Advances every live particle; refills dead slots if sc.respawnDead.
   virtual void step(const ScenarioParams& sc, const StepParams& sp, uint32_t seed, float time) = 0;
 
-  // Writes one PointVertex per slot into `dst` (capacity >= size()).
+  // Writes one PointVertex per slot into `dst` (host memory, capacity >= size()).
   virtual void writeVertices(PointVertex* dst) = 0;
+
+  // GPU backends: write the vertices straight into an OpenGL buffer object
+  // (capacity >= size()). `generation` changes whenever the buffer storage is
+  // reallocated. Returns false if unsupported; the caller then uses writeVertices().
+  virtual bool writeVerticesGl(unsigned /*glBuffer*/, uint64_t /*generation*/) { return false; }
 
   virtual BackendStats stats() const = 0;
 };

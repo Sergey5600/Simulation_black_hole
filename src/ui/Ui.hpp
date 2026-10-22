@@ -33,6 +33,8 @@ struct UiContext {
   UiState& state;
   const Renderer& renderer;
   FrameStats stats;
+  bool cudaAvailable = false;
+  bool usingCuda = false;
 };
 
 struct UiActions {
@@ -41,6 +43,7 @@ struct UiActions {
   bool resetView = false;
   bool resetAppearance = false;
   bool screenshot = false;
+  int selectBackend = -1;  // 0 = CPU, 1 = CUDA
 };
 
 UiActions drawUi(UiContext& ctx);

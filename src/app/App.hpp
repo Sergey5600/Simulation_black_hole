@@ -24,6 +24,7 @@ struct AppOptions {
   int frames = 4;
   bool hideUi = false;
   bool vsync = true;
+  std::string backend = "auto";  // "auto" (CUDA if available), "cpu" or "cuda"
   std::vector<std::pair<std::string, std::string>> params;  // --set "Label=value"
   float yaw = NAN, pitch = NAN, distance = NAN;             // optional camera override
 };
@@ -38,6 +39,8 @@ class App {
   bool init();
   void shutdown();
 
+  std::unique_ptr<SimBackend> makeBackend(bool cuda);
+  void selectBackend(bool cuda);
   void selectScenario(size_t index);
   void resetSimulation();
   void applyParamOverrides();
@@ -55,6 +58,9 @@ class App {
   float dpiScale_ = 1.0f;
 
   std::unique_ptr<Simulation> sim_;
+  bool cudaAvailable_ = false;
+  bool usingCuda_ = false;
+  std::string cudaDevice_;
   Renderer renderer_;
   OrbitCamera camera_;
   RenderSettings render_;

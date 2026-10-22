@@ -12,6 +12,11 @@ void Simulation::addScenario(std::unique_ptr<Scenario> scenario) {
   scenarios_.push_back(std::move(scenario));
 }
 
+void Simulation::setBackend(std::unique_ptr<SimBackend> backend) {
+  backend_ = std::move(backend);
+  if (!scenarios_.empty()) reset();
+}
+
 void Simulation::select(size_t index) {
   current_ = std::min(index, scenarios_.size() - 1);
   const ScenarioDefaults d = current().defaults();

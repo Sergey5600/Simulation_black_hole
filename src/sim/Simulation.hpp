@@ -27,6 +27,9 @@ class Simulation {
   Scenario& current() { return *scenarios_[current_]; }
   size_t currentIndex() const { return current_; }
 
+  // Swaps the compute backend (CPU / CUDA) and re-spawns the current scenario.
+  void setBackend(std::unique_ptr<SimBackend> backend);
+
   // Switches scenario and re-spawns everything.
   void select(size_t index);
   // Re-spawns the current scenario from t = 0 (picks up changed counts).

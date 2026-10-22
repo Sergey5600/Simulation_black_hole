@@ -47,8 +47,16 @@ class Renderer {
   bool init();
   void shutdown();
 
-  // The simulation writes this frame's vertices straight into the mapped GL
-  // buffer (no intermediate copy). Call end before render().
+  // Point buffer with room for `count` vertices. `generation` changes whenever
+  // the storage is reallocated (GPU backends must re-register it then).
+  struct PointBuffer {
+    GLuint id = 0;
+    uint64_t generation = 0;
+  };
+  PointBuffer reservePoints(size_t count);
+
+  // CPU path: the simulation writes this frame's vertices straight into the
+  // mapped GL buffer (no intermediate copy). Call end before render().
   PointVertex* beginPointUpload(size_t count);
   void endPointUpload();
 
@@ -70,6 +78,7 @@ class Renderer {
   GLuint emptyVao_ = 0;
   GLuint pointsVao_ = 0, pointsVbo_ = 0;
   size_t pointsCapacity_ = 0;
+  uint64_t pointsGeneration_ = 0;
   GLuint starsVao_ = 0, starsVbo_ = 0;
   GLsizei starCount_ = 0;
   GLuint linesVao_ = 0, linesVbo_ = 0;

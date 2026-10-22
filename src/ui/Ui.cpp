@@ -40,9 +40,24 @@ void drawTransport(UiContext& ctx, UiActions& out) {
   if (SecondaryButton("Restart", ImVec2(w, 0.0f))) out.reset = true;
 }
 
-void drawSimulation(UiContext& ctx) {
+void drawSimulation(UiContext& ctx, UiActions& out) {
   if (!BeginSection("Simulation")) return;
   SimControls& c = ctx.sim.controls();
+
+  PropertyLabel("Compute", "Where the physics runs. CUDA keeps every particle on the GPU and writes vertices "
+                           "straight into the OpenGL buffer.");
+  if (ctx.cudaAvailable) {
+    static const char* const kBackends[] = {"CPU", "GPU \xC2\xB7 CUDA"};
+    int backend = ctx.usingCuda ? 1 : 0;
+    if (SegmentedControl("backend", &backend, kBackends)) out.selectBackend = backend;
+  } else {
+    ImGui::BeginDisabled();
+    static const char* const kCpuOnly[] = {"CPU"};
+    int cpu = 0;
+    SegmentedControl("backend", &cpu, kCpuOnly);
+    ImGui::EndDisabled();
+  }
+
   SliderRow("Speed", &c.timeScale, 0.5f, 500.0f, "%.1f M/s", true,
             "Simulated time per real second, in units of M/c (GM/c\xC2\xB3). For a 10 solar-mass black hole "
             "M/c is 49 microseconds; for Sagittarius A* it is about 20 seconds.");
@@ -212,7 +227,7 @@ void drawPanel(UiContext& ctx, UiActions& out) {
     drawHeader(ctx, out);
     ImGui::Dummy(ImVec2(0.0f, 2.0f * s));
     drawTransport(ctx, out);
-    drawSimulation(ctx);
+    drawSimulation(ctx, out);
     drawScenarioParams(ctx, out);
     drawAppearance(ctx, out);
     drawPost(ctx);

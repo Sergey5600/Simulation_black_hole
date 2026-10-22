@@ -23,8 +23,8 @@ void AccretionDisk::reset(SimBackend& backend, uint32_t seed, float time) {
 
 std::vector<ParamDesc> AccretionDisk::parameters() {
   return {
-      ParamDesc::integer("Particles", &count_, 10000, 2000000, true,
-                         "Number of gas elements. The CPU backend handles ~1M at interactive rates.", true),
+      ParamDesc::integer("Particles", &count_, 10000, 20000000, true,
+                         "Number of gas elements. CPU: ~0.5M at 60 FPS. CUDA: tens of millions.", true),
       ParamDesc::slider("Inner radius", &disk_.innerRadius, 3.5f, 20.0f, "%.1f M", true,
                         "Where the initial disk starts. ISCO = 6 M: inside it no stable circular orbit exists."),
       ParamDesc::slider("Outer radius", &disk_.outerRadius, 10.0f, 150.0f, "%.0f M", true),
