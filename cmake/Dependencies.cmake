@@ -32,6 +32,7 @@ FetchContent_Declare(tinyexr
   GIT_REPOSITORY https://github.com/syoyo/tinyexr.git
   GIT_TAG v1.0.9
   GIT_SHALLOW TRUE
+  GIT_SUBMODULES ""           # its ZFP submodule is not needed (and slow to clone)
   SOURCE_SUBDIR no-such-dir)  # sources only: skip its own CMake project (tests, examples)
 
 FetchContent_MakeAvailable(glfw glm imgui tinyexr)

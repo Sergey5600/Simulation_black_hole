@@ -134,9 +134,10 @@ BH_HD inline void spawnDisk(const DiskParams& d, uint32_t index, uint32_t seed, 
     const Vec3 tangentKS{-X.y, X.x, 0.0f};  // ∂X/∂φ
     const Vec3 radialKS{c, s, 0.0f};        // ∂X/∂r
     const float vOrbit = omega * ut * length(tangentKS);
-    const Vec3 u = tangentKS * (omega * ut * (speed / vc)) + radialKS * (vOrbit * d.eccentricity * 0.5f * radialKick) +
-                   Vec3{0.0f, 0.0f, vOrbit * d.thickness * verticalKick};
-    const Vec3 P = kerr::covariantMomentum(X, u, ut, spin);
+    const Vec3 velocity = tangentKS * (omega * ut * (speed / vc)) +
+                          radialKS * (vOrbit * d.eccentricity * 0.5f * radialKick) +
+                          Vec3{0.0f, 0.0f, vOrbit * d.thickness * verticalKick};
+    const Vec3 P = kerr::covariantMomentum(X, velocity, ut, spin);
     p.x = kerr::fromKS(X);
     p.v = kerr::fromKS(P);
     p.energy = kerr::energyFor(X, P, spin, 1.0f);
